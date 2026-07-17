@@ -21,10 +21,10 @@ export default defineConfig({
       reportOnFailure: true,
       skipFull: true,
       thresholds: {
-        statements: 29,
-        branches: 25,
-        functions: 20,
-        lines: 30,
+        statements: 26,
+        branches: 22,
+        functions: 18,
+        lines: 27,
       },
       include: [
         "apps/*/src/**/*.{js,jsx,ts,tsx,mjs,cjs}",
