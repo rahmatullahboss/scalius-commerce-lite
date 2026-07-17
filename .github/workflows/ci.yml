@@ -87,6 +87,9 @@ jobs:
       - name: Prepare test environment
         run: pnpm dev:setup --skip-install --env-only
 
+      - name: Generate Storefront build identifier
+        run: node apps/storefront/scripts/generate-build-id.js
+
       - name: Run complete Vitest suite with coverage floors
         run: pnpm test:coverage
 
@@ -183,7 +186,7 @@ jobs:
           for url in \
             http://localhost:8787/api/v1/setup \
             http://localhost:4323/auth/login \
-            http://localhost:4322/health; do
+            http://localhost:4322/favicon.svg; do
             ready=false
             for attempt in $(seq 1 90); do
               if curl --fail --silent --show-error "$url" >/dev/null; then
