@@ -346,9 +346,9 @@ test.describe("local marketplace release smoke", () => {
       .toBe(200);
 
     await expect
-      .poll(() => getStatus(request, storefrontUrl), {
+      .poll(() => getStatus(request, `${storefrontUrl}/favicon.svg`), {
         timeout: 30_000,
-        message: "Storefront did not become ready",
+        message: "Storefront process did not become ready",
       })
       .toBe(200);
 
