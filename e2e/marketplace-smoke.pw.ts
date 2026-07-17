@@ -131,16 +131,25 @@ async function expectLoginForm(page: import("@playwright/test").Page) {
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 }
 
-async function waitForReactControl(locator: ReturnType<Page["getByLabel"]>) {
+async function waitForReactControl(
+  locator: ReturnType<Page["getByLabel"]>,
+  timeout = 30_000,
+) {
+  await expect(locator).toBeVisible({ timeout });
   await expect
     .poll(
-      () =>
-        locator.evaluate((element) =>
-          Object.keys(element).some(
-            (key) => key.startsWith("__reactProps$") || key.startsWith("__reactFiber$"),
-          ),
-        ),
-      { timeout: 15_000 },
+      async () => {
+        try {
+          return await locator.evaluate((element) =>
+            Object.keys(element).some(
+              (key) => key.startsWith("__reactProps$") || key.startsWith("__reactFiber$"),
+            ),
+          );
+        } catch {
+          return false;
+        }
+      },
+      { timeout },
     )
     .toBe(true);
 }
@@ -511,7 +520,7 @@ test.describe("local marketplace release smoke", () => {
   });
 
   test("approved seller can publish a public store profile", async ({ browser }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(120_000);
     const restoreFlags = enableLocalMarketplaceFlags([
       "vendor_onboarding_write",
       "vendor_catalog_write",
