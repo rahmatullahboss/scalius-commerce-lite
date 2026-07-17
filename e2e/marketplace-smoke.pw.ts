@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Browser,
   type BrowserContext,
+  type Locator,
   type Page,
 } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -132,7 +133,7 @@ async function expectLoginForm(page: import("@playwright/test").Page) {
 }
 
 async function waitForReactControl(
-  locator: ReturnType<Page["getByLabel"]>,
+  locator: Locator,
   timeout = 30_000,
 ) {
   await expect(locator).toBeVisible({ timeout });
@@ -152,6 +153,13 @@ async function waitForReactControl(
       { timeout },
     )
     .toBe(true);
+}
+
+async function openHydratedTab(page: Page, name: string) {
+  const tab = page.getByRole("tab", { name, exact: true });
+  await waitForReactControl(tab);
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true", { timeout: 30_000 });
 }
 
 async function waitForLoginHydration(page: Page) {
@@ -529,7 +537,7 @@ test.describe("local marketplace release smoke", () => {
     let fixture: SellerFixture | null = null;
     try {
       fixture = await createApprovedSeller(browser);
-      await fixture.sellerPage.getByRole("tab", { name: "Store profile" }).click();
+      await openHydratedTab(fixture.sellerPage, "Store profile");
       const description = fixture.sellerPage.getByLabel("Seller description");
       await waitForReactControl(description);
       const publicDescription = `Trusted marketplace profile ${fixture.sellerSlug}`;
@@ -567,7 +575,7 @@ test.describe("local marketplace release smoke", () => {
     try {
       fixture = await createApprovedSeller(browser);
       const member = await createLocalUser(fixture.platformPage, "marketplace-member");
-      await fixture.sellerPage.getByRole("tab", { name: "Team" }).click();
+      await openHydratedTab(fixture.sellerPage, "Team");
       const inviteeEmail = fixture.sellerPage.getByLabel("Invitee email");
       await waitForReactControl(inviteeEmail);
       await inviteeEmail.fill(member.email);
@@ -1120,7 +1128,7 @@ test.describe("local marketplace release smoke", () => {
       expect(moderated.product.isActive).toBe(true);
 
       await fixture.sellerPage.goto(`${adminUrl}/admin/vendor-dashboard?vendorId=${fixture.vendorId}`);
-      await fixture.sellerPage.getByRole("tab", { name: "Products" }).click();
+      await openHydratedTab(fixture.sellerPage, "Products");
       await expect(fixture.sellerPage.getByText(productName)).toBeVisible();
       await expect(fixture.sellerPage.getByText("approved", { exact: true })).toBeVisible();
       const publicVendorPage = await fixture.sellerContext.newPage();
