@@ -52,7 +52,7 @@ verified_environment_state:
     selected_critical_allocation_and_immutability_triggers: 8_of_8
     remote_database_touched: false
   source_control:
-    git_remote: private_github_origin_configured
+    git_remote: public_github_origin_configured
     repository: rahmatullahboss/scalius-commerce-lite
     default_branch: main
     working_tree: clean_after_release_commit
@@ -372,7 +372,7 @@ phases:
 
 release_gates:
   source_control_snapshot:
-    status: private_remote_main_push_completed
+    status: clean_public_snapshot_main_push_pending
     branch: main
     repository: rahmatullahboss/scalius-commerce-lite
     requires: []

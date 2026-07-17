@@ -263,7 +263,7 @@ Git diff whitespace check: passed
 
 ### Source-control snapshot
 
-The verified repository history is now pushed to the private GitHub repository `rahmatullahboss/scalius-commerce-lite` on the canonical `main` branch. The temporary local WIP branch and legacy `mono-repo` branch were removed after `main` was created from the verified release tip. No application deployment or remote database migration was performed.
+The verified current source tree is published as a clean public snapshot in `rahmatullahboss/scalius-commerce-lite` on the canonical `main` branch. Earlier development history is retained separately in a private archive because a historical security-alert export contained sensitive fields and was not suitable for public distribution. No application deployment or remote database migration was performed.
 
 ### Fresh disposable local D1
 
