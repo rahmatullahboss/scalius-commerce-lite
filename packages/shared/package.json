@@ -15,7 +15,7 @@
     "@cloudflare/workers-types": "^4.20260613.1",
     "@scalius/tsconfig": "workspace:*",
     "@types/css-tree": "^2.3.11",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.8"
   },
   "dependencies": {
