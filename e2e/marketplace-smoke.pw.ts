@@ -126,6 +126,37 @@ async function getStatus(request: APIRequestContext, url: string): Promise<numbe
   }
 }
 
+const transientD1ErrorPattern = /D1_ERROR|SQLITE_BUSY|database is locked|internal error; reference/i;
+
+async function gotoWithTransientD1Retry(
+  page: Page,
+  url: string,
+  ready: () => Locator,
+  maxAttempts = 4,
+) {
+  let lastBody = "";
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await expect
+      .poll(
+        async () => {
+          if (await ready().isVisible()) return "ready";
+          const body = await page.locator("body").innerText().catch(() => "");
+          return transientD1ErrorPattern.test(body) ? "transient" : "pending";
+        },
+        { timeout: 30_000 },
+      )
+      .toMatch(/^(ready|transient)$/);
+
+    if (await ready().isVisible()) return;
+    lastBody = await page.locator("body").innerText().catch(() => "");
+    if (!transientD1ErrorPattern.test(lastBody) || attempt === maxAttempts - 1) {
+      throw new Error(`Seller dashboard did not recover from a transient D1 failure: ${lastBody.slice(0, 500)}`);
+    }
+    await page.waitForTimeout(250 * (attempt + 1));
+  }
+}
+
 async function expectLoginForm(page: import("@playwright/test").Page) {
   await expect(page.getByLabel("Email")).toBeVisible();
   await expect(page.getByLabel("Password")).toBeVisible();
@@ -316,12 +347,13 @@ async function createApprovedSeller(
       reason: null,
     });
   }
-  await sellerPage.goto(`${adminUrl}/admin/vendor-dashboard?vendorId=${application.vendorId}`);
-  if (options.approve !== false) {
-    await expect(sellerPage.getByRole("tab", { name: "Overview" })).toBeVisible();
-  } else {
-    await expect(sellerPage.getByText("Your seller application is under platform review.")).toBeVisible();
-  }
+  await gotoWithTransientD1Retry(
+    sellerPage,
+    `${adminUrl}/admin/vendor-dashboard?vendorId=${application.vendorId}`,
+    () => options.approve !== false
+      ? sellerPage.getByRole("tab", { name: "Overview" })
+      : sellerPage.getByText("Your seller application is under platform review."),
+  );
   return {
     platformContext,
     platformPage,
@@ -473,9 +505,11 @@ test.describe("local marketplace release smoke", () => {
       expect(approvalResponse.status()).toBe(200);
       await expect(vendorStatus).toHaveValue("approved");
 
-      await sellerPage.goto(`${adminUrl}/admin/vendor-dashboard?vendorId=${vendorId}`);
-      await sellerPage.reload();
-      await expect(sellerPage.getByRole("tab", { name: "Overview" })).toBeVisible();
+      await gotoWithTransientD1Retry(
+        sellerPage,
+        `${adminUrl}/admin/vendor-dashboard?vendorId=${vendorId}`,
+        () => sellerPage.getByRole("tab", { name: "Overview" }),
+      );
       await expect(sellerPage.getByRole("tab", { name: "Products" })).toBeVisible();
       await expect(sellerPage.getByText(sellerName).first()).toBeVisible();
     } finally {
@@ -497,8 +531,11 @@ test.describe("local marketplace release smoke", () => {
         status: "rejected",
         reason: "Correct the pickup address",
       });
-      await fixture.sellerPage.goto(`${adminUrl}/admin/vendor-dashboard?vendorId=${fixture.vendorId}`);
-      await expect(fixture.sellerPage.getByText("Your seller application was rejected.")).toBeVisible();
+      await gotoWithTransientD1Retry(
+        fixture.sellerPage,
+        `${adminUrl}/admin/vendor-dashboard?vendorId=${fixture.vendorId}`,
+        () => fixture.sellerPage.getByText("Your seller application was rejected."),
+      );
       await expect(
         fixture.sellerPage.getByText("Correct and resubmit seller application", { exact: true }),
       ).toBeVisible();
@@ -519,8 +556,11 @@ test.describe("local marketplace release smoke", () => {
         status: "approved",
         reason: null,
       });
-      await fixture.sellerPage.reload();
-      await expect(fixture.sellerPage.getByRole("tab", { name: "Products" })).toBeVisible();
+      await gotoWithTransientD1Retry(
+        fixture.sellerPage,
+        `${adminUrl}/admin/vendor-dashboard?vendorId=${fixture.vendorId}`,
+        () => fixture.sellerPage.getByRole("tab", { name: "Products" }),
+      );
     } finally {
       restoreFlags();
       await closeSellerFixture(fixture);
@@ -591,8 +631,12 @@ test.describe("local marketplace release smoke", () => {
       const impersonatedMember = await createImpersonatedUserContext(browser, member.userId);
       memberContext = impersonatedMember.context;
       const memberPage = impersonatedMember.page;
-      await memberPage.goto(`${adminUrl}/admin/vendor-dashboard`);
       const credentialInput = memberPage.getByLabel("Seller invitation credential");
+      await gotoWithTransientD1Retry(
+        memberPage,
+        `${adminUrl}/admin/vendor-dashboard`,
+        () => credentialInput,
+      );
       await waitForReactControl(credentialInput);
       await credentialInput.fill(token);
       const acceptResponsePromise = memberPage.waitForResponse((response) =>
@@ -1127,7 +1171,11 @@ test.describe("local marketplace release smoke", () => {
       expect(moderated.product.approvalStatus).toBe("approved");
       expect(moderated.product.isActive).toBe(true);
 
-      await fixture.sellerPage.goto(`${adminUrl}/admin/vendor-dashboard?vendorId=${fixture.vendorId}`);
+      await gotoWithTransientD1Retry(
+        fixture.sellerPage,
+        `${adminUrl}/admin/vendor-dashboard?vendorId=${fixture.vendorId}`,
+        () => fixture.sellerPage.getByRole("tab", { name: "Overview" }),
+      );
       await openHydratedTab(fixture.sellerPage, "Products");
       await expect(fixture.sellerPage.getByText(productName)).toBeVisible();
       await expect(fixture.sellerPage.getByText("approved", { exact: true })).toBeVisible();
