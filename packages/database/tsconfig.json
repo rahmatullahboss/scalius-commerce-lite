@@ -1,0 +1,9 @@
+{
+  "extends": "@scalius/tsconfig/worker.json",
+  "compilerOptions": {
+    "paths": {
+      "@scalius/database/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

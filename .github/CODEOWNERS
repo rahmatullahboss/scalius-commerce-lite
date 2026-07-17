@@ -1,0 +1,10 @@
+# Default repository owner
+* @rahmatullahboss
+
+# High-risk marketplace and deployment surfaces
+/.github/workflows/ @rahmatullahboss
+/apps/api/ @rahmatullahboss
+/packages/core/src/modules/marketplace/ @rahmatullahboss
+/packages/database/migrations/ @rahmatullahboss
+/scripts/deploy.mjs @rahmatullahboss
+/scripts/deploy-guard.mjs @rahmatullahboss

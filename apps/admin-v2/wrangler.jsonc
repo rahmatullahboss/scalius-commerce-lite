@@ -1,0 +1,67 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "marketplace-admin-local",
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "main": "@tanstack/react-start/server-entry",
+  // Local-owned placeholder configuration. Remote deploy is fail-closed.
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "limits": {
+    "cpu_ms": 300000
+  },
+  "dev": {
+    "inspector_port": 9232
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "marketplace-local-db",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "../../packages/database/migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "00000000000000000000000000000001"
+    },
+    {
+      "binding": "SESSION",
+      "id": "00000000000000000000000000000003"
+    },
+    {
+      "binding": "SHARED_AUTH_CACHE",
+      "id": "00000000000000000000000000000002"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "marketplace-local-media"
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
+  "services": [
+    {
+      "binding": "API",
+      "service": "marketplace-api-local"
+    }
+  ],
+  "vars": {
+    "PUBLIC_API_BASE_URL": "http://localhost:8787",
+    "BETTER_AUTH_URL": "http://localhost:4323",
+    "STOREFRONT_URL": "http://localhost:4322",
+    "CDN_DOMAIN_URL": "localhost:8787",
+    "R2_PUBLIC_URL": "http://localhost:8787/api/v1/media",
+    "PURGE_URL": "http://localhost:4322/api/purge-cache"
+  }
+}

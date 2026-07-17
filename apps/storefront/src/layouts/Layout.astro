@@ -1,0 +1,391 @@
+---
+// src/layouts/Layout.astro
+import "../styles/global.css";
+import Header from "../components/header/header.astro";
+import Footer from "../components/Footer.astro";
+import { Toaster } from "@/components/ui/sonner";
+import { getLayoutData, type LayoutData } from "@/lib/api";
+import type { AnalyticsConfig } from "@/lib/api";
+import CommandPalette from "@/components/search/CommandPalette";
+import AuthModal from "@/components/AuthModal";
+import { getOptimizedImageUrl } from "@/lib/image-optimizer";
+import {
+  getRuntimeStorefrontUrl,
+  setRuntimeImageCdnPolicy,
+} from "@/lib/api/runtime-env";
+import { serializeJsonForInlineScript } from "@/lib/safe-json";
+import { DEFAULT_CURRENCY } from "@scalius/shared/currency";
+import { sanitizeStorefrontThemeColors } from "@scalius/shared/storefront-theme";
+
+interface Props {
+  title: string;
+  description?: string;
+  hideHeader?: boolean;
+  hideFooter?: boolean;
+  /** Pre-fetched layout data for parallel loading optimization */
+  layoutData?: LayoutData | null;
+  // SEO props — per CAN-01, CAN-02, OG-01 through OG-05, SEO-05, SEO-06
+  canonicalUrl?: string;
+  ogImage?: string;
+  ogType?: "website" | "product";
+  ogPrice?: string;
+  ogCurrency?: string;
+  noindex?: boolean;
+}
+
+const {
+  title,
+  description = "",
+  hideHeader = false,
+  hideFooter = false,
+  layoutData: providedLayoutData,
+  canonicalUrl,
+  ogImage,
+  ogType = "website",
+  ogPrice,
+  ogCurrency,
+  noindex,
+} = Astro.props;
+
+// Use provided layout data when pages load it in parallel; otherwise fetch here.
+const layoutData = providedLayoutData ?? (await getLayoutData());
+setRuntimeImageCdnPolicy(layoutData?.media);
+
+const analyticsScripts: AnalyticsConfig[] = layoutData?.analytics || [];
+const navigationData = layoutData?.navigation || [];
+
+// Provide sensible defaults if API fails to prevent blank header/footer
+const headerData = layoutData?.header ?? {
+  topBar: { text: "", isEnabled: false },
+  logo: { src: "", alt: "Store" },
+  favicon: { src: "/favicon.svg", alt: "" },
+  contact: { phone: "", text: "", isEnabled: false },
+  social: [],
+};
+
+const footerData = layoutData?.footer ?? {
+  logo: { src: "", alt: "Store" },
+  favicon: { src: "/favicon.svg", alt: "" },
+  tagline: "",
+  description: "",
+  copyrightText: "Your Store",
+  menus: [],
+  social: [],
+};
+
+const faviconUrl = headerData?.favicon?.src
+  ? getOptimizedImageUrl(headerData.favicon.src, {
+      width: 64,
+      height: 64,
+      fit: "contain",
+    })
+  : "/favicon.svg";
+
+// --- SEO: store name, Organization JSON-LD, WebSite JSON-LD (per SEO-05, SEO-06) ---
+const storeName = footerData.copyrightText || headerData.logo.alt || "Store";
+const storefrontUrl = getRuntimeStorefrontUrl();
+
+// Organization JSON-LD — only emit when we have a logo (per SEO-05)
+const logoUrl = headerData.logo.src
+  ? getOptimizedImageUrl(headerData.logo.src, {
+      width: 512,
+      height: 512,
+      fit: "contain",
+    })
+  : null;
+const socialUrls = (footerData.social || [])
+  .map((s: { url?: string }) => s.url)
+  .filter(Boolean);
+const orgJsonLd = logoUrl
+  ? serializeJsonForInlineScript({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      name: storeName,
+      url: storefrontUrl,
+      logo: { "@type": "ImageObject", url: logoUrl },
+      ...(socialUrls.length > 0 ? { sameAs: socialUrls } : {}),
+    })
+  : null;
+
+// WebSite JSON-LD with SearchAction for Google Sitelinks Search Box (per SEO-06)
+const websiteJsonLd = storefrontUrl
+  ? serializeJsonForInlineScript({
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: storeName,
+      url: storefrontUrl,
+      potentialAction: {
+        "@type": "SearchAction",
+        target: {
+          "@type": "EntryPoint",
+          urlTemplate: `${storefrontUrl}/search?q={search_term_string}`,
+        },
+        "query-input": "required name=search_term_string",
+      },
+    })
+  : null;
+
+const currencySymbol = layoutData?.currency?.symbol ?? DEFAULT_CURRENCY.symbol;
+const currencyCode = layoutData?.currency?.code ?? DEFAULT_CURRENCY.code;
+const currencyDecimalPlaces =
+  layoutData?.currency?.decimalPlaces ?? DEFAULT_CURRENCY.decimalPlaces;
+
+// Build dynamic CSS overrides from admin-configured theme colors.
+// Only non-empty color values are included.
+const themeColors = sanitizeStorefrontThemeColors(
+  layoutData?.theme?.colors ?? {},
+);
+const themeColorEntries = Object.entries(themeColors);
+const themeStyleBlock =
+  themeColorEntries.length > 0
+    ? `:root, .site-root { ${themeColorEntries.map(([k, v]) => `--${k}: ${v}`).join("; ")}; }`
+    : "";
+
+const headScripts = analyticsScripts.filter(
+  (script) => script.location === "head",
+);
+const bodyStartScripts = analyticsScripts.filter(
+  (script) => script.location === "body_start",
+);
+const bodyEndScripts = analyticsScripts.filter(
+  (script) => script.location === "body_end",
+);
+
+// Derive preconnect origins from Cloudflare Worker env (wrangler.jsonc vars).
+// All values come from runtime bindings — no build-time fallbacks.
+import { env as cfEnv } from "cloudflare:workers";
+const workerEnv = (() => {
+  try {
+    const e = cfEnv as unknown as Env;
+    return e?.CDN_DOMAIN_URL || e?.PUBLIC_API_URL ? e : null;
+  } catch {
+    return null;
+  }
+})();
+const publicApiUrl =
+  (workerEnv?.PUBLIC_API_URL as string) ||
+  (import.meta.env.PUBLIC_API_URL as string) ||
+  "";
+const envCdnDomainUrl = (workerEnv?.CDN_DOMAIN_URL as string) || "";
+const mediaSettings = layoutData?.media;
+const configuredCdnBase =
+  mediaSettings?.canonicalCdnUrl?.trim() || envCdnDomainUrl;
+const cdnDomainUrl = configuredCdnBase
+  .replace(/^https?:\/\//, "")
+  .replace(/\/$/, "");
+const imageOptimizationEnabled = mediaSettings?.enabled !== false;
+const imageCdnHosts = [
+  cdnDomainUrl,
+  ...(mediaSettings?.allowedImageHosts ?? []),
+]
+  .map((host) =>
+    host
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "")
+      .toLowerCase(),
+  )
+  .filter(Boolean);
+const imageCdnAliases = (mediaSettings?.canonicalHostAliases ?? [])
+  .map((host) =>
+    host
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "")
+      .toLowerCase(),
+  )
+  .filter(Boolean);
+
+const apiOrigin = publicApiUrl ? new URL(publicApiUrl).origin : null;
+const cdnDomain = cdnDomainUrl || null;
+const runtimeGlobalsScript = [
+  `window.__API_BASE_URL__=${serializeJsonForInlineScript(publicApiUrl)};`,
+  `window.__CDN_DOMAIN__=${serializeJsonForInlineScript(cdnDomainUrl || "")};`,
+  `window.__IMAGE_OPTIMIZATION_ENABLED__=${serializeJsonForInlineScript(imageOptimizationEnabled)};`,
+  `window.__IMAGE_CDN_BASE_URL__=${serializeJsonForInlineScript(cdnDomainUrl || "")};`,
+  `window.__IMAGE_CDN_HOSTS__=${serializeJsonForInlineScript(imageCdnHosts)};`,
+  `window.__IMAGE_CDN_CANONICAL_HOST_ALIASES__=${serializeJsonForInlineScript(imageCdnAliases)};`,
+  `window.__CURRENCY_SYMBOL__=${serializeJsonForInlineScript(currencySymbol)};`,
+  `window.__CURRENCY_CODE__=${serializeJsonForInlineScript(currencyCode)};`,
+  `window.__CURRENCY_DECIMAL_PLACES__=${serializeJsonForInlineScript(currencyDecimalPlaces)};`,
+].join("");
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!-- Preconnect: warm up DNS + TLS for API and CDN origins early -->
+    {apiOrigin && <link rel="dns-prefetch" href={apiOrigin} />}
+    {apiOrigin && <link rel="preconnect" href={apiOrigin} crossorigin />}
+    {cdnDomain && <link rel="dns-prefetch" href={`https://${cdnDomain}`} />}
+    {
+      cdnDomain && (
+        <link rel="preconnect" href={`https://${cdnDomain}`} crossorigin />
+      )
+    }
+
+    <!-- Runtime API URL, CDN domain, and currency for client-side JS (Cloudflare Worker env vars aren't available to Vite client bundles) -->
+    <script is:inline set:html={runtimeGlobalsScript} />
+
+    <script is:inline>
+      (function () {
+        window.addEventListener("open-auth-modal", function () {
+          window.__scaliusAuthModalOpenPending = true;
+        });
+      })();
+    </script>
+
+    <!-- Stale Asset Detector -->
+    <script is:inline>
+      (function () {
+        const r = sessionStorage.getItem("_ar");
+        if (r && Date.now() - parseInt(r, 10) < 30000) return;
+
+        window.addEventListener(
+          "error",
+          function (e) {
+            const t = e.target;
+            if (!(t instanceof HTMLScriptElement || t instanceof HTMLLinkElement)) return;
+            const tag = t.tagName.toUpperCase();
+            const url = t instanceof HTMLScriptElement ? t.src : t.href;
+            if (
+              (tag === "SCRIPT" || tag === "LINK") &&
+              url.indexOf("/_astro/") > -1
+            ) {
+              console.warn("[StaleAsset] 404:", url);
+              sessionStorage.setItem("_ar", Date.now().toString());
+              location.reload();
+            }
+          },
+          true,
+        );
+
+        window.addEventListener("unhandledrejection", function (e) {
+          if (
+            e.reason &&
+            e.reason.message &&
+            e.reason.message.indexOf("dynamically imported") > -1 &&
+            e.reason.message.indexOf("/_astro/") > -1
+          ) {
+            console.warn("[StaleAsset] Import failed");
+            sessionStorage.setItem("_ar", Date.now().toString());
+            location.reload();
+          }
+        });
+      })();
+    </script>
+
+    <!-- Prevent browser from caching this HTML -->
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <link rel="icon" href={faviconUrl} />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+
+    {/* Canonical URL — per CAN-01, CAN-02 */}
+    {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+
+    {/* Open Graph tags — per OG-01 through OG-05 */}
+    <meta property="og:site_name" content={storeName} />
+    <meta property="og:type" content={ogType} />
+    <meta property="og:title" content={title} />
+    {description && <meta property="og:description" content={description} />}
+    {canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
+    {ogImage && <meta property="og:image" content={ogImage} />}
+    {ogImage && <meta property="og:image:width" content="1200" />}
+    {ogImage && <meta property="og:image:height" content="630" />}
+    {ogImage && <meta property="og:image:alt" content={title} />}
+    {ogPrice && <meta property="og:price:amount" content={ogPrice} />}
+    {ogCurrency && <meta property="og:price:currency" content={ogCurrency} />}
+
+    {/* Twitter Card — per OG-04 */}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    {description && <meta name="twitter:description" content={description} />}
+    {ogImage && <meta name="twitter:image" content={ogImage} />}
+    {ogImage && <meta name="twitter:image:alt" content={title} />}
+
+    {/* Robots — noindex for pages that should be excluded */}
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
+
+    {/* Global JSON-LD: Organization + WebSite — per SEO-05, SEO-06 */}
+    {orgJsonLd && <script is:inline type="application/ld+json" set:html={orgJsonLd} />}
+    {
+      websiteJsonLd && (
+        <script is:inline type="application/ld+json" set:html={websiteJsonLd} />
+      )
+    }
+
+    {headScripts.map((script) => <Fragment set:html={script.config} />)}
+
+    <script is:inline>
+      // Stub for Facebook Pixel on the main thread
+      window.fbq =
+        window.fbq ||
+        function (...args) {
+          (window.fbq.q = window.fbq.q || []).push(args);
+        };
+    </script>
+    <script type="text/partytown" is:inline>
+      // Stub for Facebook Pixel INSIDE the Partytown Web Worker
+      // Prevents "TypeError: Cannot read properties of undefined (reading 'apply')"
+      // when Partytown proxies fbq() calls here but the real script hasn't loaded.
+      self.fbq =
+        self.fbq ||
+        function (...args) {
+          (self.fbq.q = self.fbq.q || []).push(args);
+        };
+    </script>
+    <script is:inline>
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const fbclid = urlParams.get("fbclid");
+        if (fbclid) {
+          const creationTime = Date.now();
+          const fbcValue = `fb.1.${creationTime}.${fbclid}`;
+          document.cookie = `_fbc=${fbcValue}; path=/; max-age=7776000`;
+          sessionStorage.setItem("scalius_fbc", fbcValue);
+        }
+      } catch (e) {
+        console.warn("Could not process fbclid:", e);
+      }
+    </script>
+
+    {themeStyleBlock && <style set:html={themeStyleBlock} />}
+
+    <slot name="head" />
+  </head>
+  <body class="flex flex-col min-h-screen site-root">
+    {bodyStartScripts.map((script) => <Fragment set:html={script.config} />)}
+
+    <div class="site-wrapper grow">
+      {
+        !hideHeader && (
+          <Header headerData={headerData} navigation={navigationData} />
+        )
+      }
+      <main class="w-full h-full mb-3">
+        <slot />
+      </main>
+    </div>
+
+    {!hideFooter && <Footer footerData={footerData} />}
+
+    <Toaster position="top-right" expand={false} richColors closeButton />
+
+    <CommandPalette client:idle />
+    <AuthModal client:idle />
+
+    {bodyEndScripts.map((script) => <Fragment set:html={script.config} />)}
+  </body>
+</html>

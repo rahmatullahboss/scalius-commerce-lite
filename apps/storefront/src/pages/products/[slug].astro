@@ -1,0 +1,404 @@
+---
+import { getLayoutData, getProductBySlug } from "@/lib/api";
+import Layout from "@/layouts/Layout.astro";
+import ProductBreadcrumbs from "@/components/product/ProductBreadcrumbs.astro";
+import ProductGallery from "@/components/product/ProductGallery.astro";
+import ProductSummary from "@/components/product/ProductSummary.astro";
+import RelatedProducts from "@/components/product/RelatedProducts.astro";
+import WidgetPlacementZone from "@/components/WidgetPlacementZone.astro";
+import { getProductImageUrl, hasProductImage } from "@/lib/product-media";
+import { serializeJsonForInlineScript } from "@/lib/safe-json";
+import {
+  getRuntimeStorefrontUrl,
+  setRuntimeImageCdnPolicy,
+} from "@/lib/api/runtime-env";
+import { getActiveWidgetsForScope } from "@/lib/api/widgets";
+import { resolveBuyerVariants, getBuyerStockSummary } from "@/lib/product-sellable-variants";
+
+const { slug } = Astro.params;
+if (!slug) {
+  return new Response(null, { status: 404 });
+}
+
+const layoutPromise = getLayoutData();
+const productPromise = getProductBySlug(slug);
+const productWidgetsPromise = productPromise.then((data) =>
+  data ? getActiveWidgetsForScope("product", data.product.id) : null,
+);
+
+// Parallel fetch: layout + product + scoped widgets in the first cold-cache wave
+const [layoutData, productData, fetchedProductWidgets] = await Promise.all([
+  layoutPromise,
+  productPromise,
+  productWidgetsPromise,
+]);
+setRuntimeImageCdnPolicy(layoutData?.media);
+if (!productData) {
+  return new Response(null, { status: 404 });
+}
+
+const { product, seller, category, images, variants, relatedProducts } = productData;
+const productWidgets = fetchedProductWidgets ?? [];
+const buyerVariantResolution = resolveBuyerVariants(variants);
+const buyerVariants = buyerVariantResolution.variants;
+const buyerStockSummary = getBuyerStockSummary(buyerVariants);
+
+const isVariantSpecificImagesEnabled = !!product.metaDescription?.includes(
+  "<!--variant_images:enabled-->",
+);
+const cleanMetaDescription =
+  product.metaDescription
+    ?.replace(/<!--variant_images:enabled-->/g, "")
+    .trim() || "";
+
+const discountedPrice = product.discountedPrice;
+const productCategory = category ?? null;
+
+const sizeOrderMap = new Map<string, number>();
+buyerVariants.forEach((v) => {
+  if (v.size && !sizeOrderMap.has(v.size)) {
+    sizeOrderMap.set(v.size, v.sizeSortOrder);
+  }
+});
+const sizeOptions = Array.from(sizeOrderMap.entries())
+  .sort((a, b) => a[1] - b[1])
+  .map((entry) => entry[0]);
+
+const colorOrderMap = new Map<string, number>();
+buyerVariants.forEach((v) => {
+  if (v.color && !colorOrderMap.has(v.color)) {
+    colorOrderMap.set(v.color, v.colorSortOrder);
+  }
+});
+const colorOptions = Array.from(colorOrderMap.entries())
+  .sort((a, b) => a[1] - b[1])
+  .map((entry) => entry[0]);
+
+const pageTitle = product.metaTitle || product.name;
+const pageDescription = cleanMetaDescription;
+import { DEFAULT_CURRENCY } from "@scalius/shared/currency";
+const currencySymbol = layoutData?.currency?.symbol ?? DEFAULT_CURRENCY.symbol;
+const quickBuyNoticeByError: Record<string, string> = {
+  product_unavailable: "This item is not available right now.",
+  variant_required: "Please choose an available option before buying.",
+  variant_not_found: "That option is no longer available. Please choose another option.",
+  out_of_stock: "This item is out of stock right now.",
+  invalid_quantity: "Please choose a quantity between 1 and 99.",
+  quantity_unavailable: "The requested quantity is not available. Please lower the quantity.",
+  price_changed: "This item's price changed. Please review it before buying.",
+  validation_unavailable: "We could not refresh this item. Please try again.",
+  processing_failed: "We could not prepare this item. Please try again.",
+};
+const quickBuyNotice = quickBuyNoticeByError[Astro.url.searchParams.get("error") ?? ""] ?? null;
+
+// --- SEO: per SEO-01, SEO-02, OG-01, OG-05 ---
+const currencyCode = layoutData?.currency?.code ?? DEFAULT_CURRENCY.code;
+const storefrontUrl = getRuntimeStorefrontUrl();
+const canonicalUrl = `${storefrontUrl}/products/${product.slug}`;
+
+// OG image: 1200x630 for social sharing (per OG-05)
+const primaryImageUrl =
+  images.find((image) => hasProductImage(image.url))?.url ||
+  (hasProductImage(product.imageUrl) ? product.imageUrl : null);
+const serializedProductImageUrl = getProductImageUrl(primaryImageUrl, {
+  width: 600,
+  height: 600,
+  quality: 85,
+  format: "auto",
+  fit: "contain",
+});
+const ogImageUrl = primaryImageUrl
+  ? getProductImageUrl(primaryImageUrl, {
+      width: 1200,
+      height: 630,
+      quality: 85,
+      format: "auto",
+      fit: "cover",
+    })
+  : null;
+
+// Description for OG and JSON-LD -- strip HTML (per research constraint)
+const seoDescription = (
+  cleanMetaDescription ||
+  product.description ||
+  product.name
+)
+  .replace(/<[^>]+>/g, "")
+  .slice(0, 200);
+
+// Store name for JSON-LD seller and brand fallback
+const storeName =
+  layoutData?.footer?.copyrightText || layoutData?.header?.logo?.alt || "Store";
+
+// Brand from product attributes (mirrors facebook-feed.xml.ts pattern)
+const brandAttribute = product.attributes?.find(
+  (a: { name: string }) => a.name.toLowerCase() === "brand",
+);
+const brandName = brandAttribute?.value || storeName;
+
+// Primary SKU
+const primarySku = buyerVariants[0]?.sku || product.id;
+
+// priceValidUntil -- end of next year, ISO 8601 date
+const priceValidUntil = new Date(new Date().getFullYear() + 1, 11, 31)
+  .toISOString()
+  .split("T")[0];
+
+// Product JSON-LD -- per SEO-01 (merchant listing spec)
+const productJsonLd = serializeJsonForInlineScript({
+  "@context": "https://schema.org",
+  "@type": "Product",
+  name: product.name,
+  description: (product.description || product.name).replace(/<[^>]+>/g, ""),
+  ...(ogImageUrl ? { image: [ogImageUrl] } : {}),
+  sku: primarySku,
+  brand: { "@type": "Brand", name: brandName },
+  offers: {
+    "@type": "Offer",
+    url: canonicalUrl,
+    priceCurrency: currencyCode,
+    price: product.discountedPrice.toFixed(2),
+    priceValidUntil: priceValidUntil,
+    availability: buyerStockSummary.canPurchaseAny
+      ? "https://schema.org/InStock"
+      : "https://schema.org/OutOfStock",
+    itemCondition: "https://schema.org/NewCondition",
+    seller: { "@type": "Organization", name: seller?.name || storeName },
+  },
+});
+
+// BreadcrumbList JSON-LD -- per SEO-02
+const breadcrumbItems = [
+  { "@type": "ListItem", position: 1, name: "Home", item: `${storefrontUrl}/` },
+  ...(productCategory
+    ? [
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: productCategory.name,
+          item: `${storefrontUrl}/categories/${productCategory.slug}`,
+        },
+      ]
+    : []),
+  {
+    "@type": "ListItem",
+    position: productCategory ? 3 : 2,
+    name: product.name,
+    item: canonicalUrl,
+  },
+];
+const breadcrumbJsonLd = serializeJsonForInlineScript({
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: breadcrumbItems,
+});
+
+const productCategoryAnalytics = productCategory
+  ? {
+      id: productCategory.id,
+      name: productCategory.name,
+      slug: productCategory.slug,
+    }
+  : null;
+---
+
+<Layout
+  title={pageTitle}
+  description={seoDescription || pageDescription}
+  layoutData={layoutData}
+  canonicalUrl={canonicalUrl}
+  ogImage={ogImageUrl ?? undefined}
+  ogType="product"
+  ogPrice={product.discountedPrice.toFixed(2)}
+  ogCurrency={currencyCode}
+>
+  <Fragment slot="head">
+    {
+      primaryImageUrl && (
+        <link
+          rel="preload"
+          as="image"
+          href={getProductImageUrl(primaryImageUrl, {
+            width: 600,
+            height: 600,
+            quality: 85,
+            format: "auto",
+            fit: "contain",
+          })}
+          fetchpriority="high"
+        />
+      )
+    }
+    <script is:inline type="application/ld+json" set:html={productJsonLd} />
+    <script is:inline type="application/ld+json" set:html={breadcrumbJsonLd} />
+  </Fragment>
+
+  <main
+    class="min-h-screen bg-white product-container"
+    id="product-container"
+    data-product-id={product.id}
+    data-product-slug={product.slug}
+    data-product-name={product.name}
+    data-product-price={String(discountedPrice)}
+    data-product-original-price={String(product.price)}
+    data-product-image={serializedProductImageUrl}
+    data-product-discount-type={product.discountType || ""}
+    data-product-discount-percentage={String(product.discountPercentage || 0)}
+    data-product-discount-amount={String(product.discountAmount || 0)}
+    data-product-free-delivery={product.freeDelivery.toString()}
+    data-product-has-variants={(buyerVariants.length > 0).toString()}
+    data-fb-product-details={JSON.stringify({
+      id: product.id,
+      slug: product.slug,
+      name: product.name,
+      discountedPrice: discountedPrice,
+    })}
+    data-fb-category-details={JSON.stringify(productCategoryAnalytics)}
+    data-fb-variants-details={JSON.stringify(buyerVariants.slice(0, 1))}
+  >
+    <WidgetPlacementZone
+      widgets={productWidgets}
+      scope="product"
+      scopeId={product.id}
+      placementSlot="top"
+      priority
+    />
+
+    <div class="lg:pt-2">
+      <ProductBreadcrumbs product={product} category={productCategory} />
+    </div>
+
+    <WidgetPlacementZone
+      widgets={productWidgets}
+      scope="product"
+      scopeId={product.id}
+      placementSlot="before_content"
+      itemClass="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-2"
+    />
+
+    <section
+      class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 sm:py-4 lg:py-6"
+    >
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-x-10 gap-y-3 lg:gap-y-8">
+        <ProductGallery product={product} images={images} />
+        <ProductSummary
+          product={product}
+          seller={seller}
+          category={productCategory}
+          variants={buyerVariants}
+          sizeOptions={sizeOptions}
+          colorOptions={colorOptions}
+          isVariantSpecificImagesEnabled={isVariantSpecificImagesEnabled}
+          currencySymbol={currencySymbol}
+          quickBuyNotice={quickBuyNotice}
+        />
+      </div>
+    </section>
+
+    <WidgetPlacementZone
+      widgets={productWidgets}
+      scope="product"
+      scopeId={product.id}
+      placementSlot="after_content"
+      itemClass="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-2"
+    />
+
+    <RelatedProducts
+      relatedProducts={relatedProducts}
+      currencySymbol={currencySymbol}
+    />
+
+    <WidgetPlacementZone
+      widgets={productWidgets}
+      scope="product"
+      scopeId={product.id}
+      placementSlot="bottom"
+      itemClass="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-2"
+    />
+  </main>
+</Layout>
+
+<script>
+  // Defer the product controller to break the critical chain for pricing-engine.js.
+  // The controller only needs to run after DOM is ready (init() does DOM queries).
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      () => {
+        import("@/components/product/scripts/product-controller").then((m) =>
+          m.init(),
+        );
+      },
+      { once: true },
+    );
+  } else {
+    import("@/components/product/scripts/product-controller").then((m) =>
+      m.init(),
+    );
+  }
+</script>
+<script>
+  import type { Product, Category, ProductVariant } from "@/lib/api";
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const container = document.getElementById("product-container");
+    if (!container) return;
+
+    const productDataAttr = container.dataset.fbProductDetails;
+    const categoryDataAttr = container.dataset.fbCategoryDetails;
+    const variantsDataAttr = container.dataset.fbVariantsDetails;
+
+    if (!productDataAttr || !categoryDataAttr || !variantsDataAttr) {
+      console.error("FB ViewContent: Missing data attributes on container.");
+      return;
+    }
+
+    try {
+      const product: Product = JSON.parse(productDataAttr);
+      const category: Category | null = JSON.parse(categoryDataAttr);
+      const variants: ProductVariant[] = JSON.parse(variantsDataAttr);
+
+      // DEFER DEPENDENCY CHAIN:
+      // Dynamically load the analytics tracker only after the page has fully loaded
+      // to remove it from the Lighthouse Critical Request Chain. We use the 'load'
+      // event instead of a 'setTimeout' to avoid arbitrary delays and ensure data
+      // isn't dropped for fast-bouncing visitors while remaining predictable for developers.
+      const triggerAnalytics = () => {
+        import("@/lib/analytics").then(({ trackFbViewContent }) => {
+          trackFbViewContent({
+            content_ids: [product.id],
+            content_name: product.name,
+            content_category: category?.name,
+            content_type: "product",
+            currency: window.__CURRENCY_CODE__ || "BDT",
+            value: product.discountedPrice,
+            contents: variants.map((v: ProductVariant) => ({
+              id: v.id && v.id !== "default" ? v.id : product.id,
+              quantity: 1,
+              item_price: v.price || product.discountedPrice,
+            })),
+          });
+        });
+      };
+
+      if (document.readyState === "complete") {
+        setTimeout(triggerAnalytics, 1);
+      } else {
+        window.addEventListener("load", triggerAnalytics, { once: true });
+      }
+    } catch (error: unknown) {
+      console.error("FB ViewContent: Error parsing data attributes:", error);
+    }
+  });
+</script>
+
+<style is:inline>
+  .product-container {
+    scroll-behavior: smooth;
+  }
+  button:focus-visible,
+  a:focus-visible {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 2px;
+  }
+</style>

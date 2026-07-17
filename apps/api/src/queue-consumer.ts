@@ -1,0 +1,729 @@
+// src/queue-consumer.ts
+// Cloudflare Queue consumer — thin dispatcher.
+// Receives batches from Cloudflare and routes each message to the right handler.
+//
+// Architecture:
+//   Webhook handler  →  enqueue message  →  return 200 immediately
+//   Queue consumer   →  process message  →  update DB, send notifications
+//
+// This makes webhooks resilient: Cloudflare retries failed queue messages
+// automatically (up to max_retries = 3).
+//
+// Handler locations:
+//   order.ingest     → src/modules/orders/orders.queue.ts
+//   payment.*        → src/modules/payments/process-payment.ts   (via switch below)
+//   order.notif      → src/modules/notifications/notifications.service.ts
+//   auth.send_otp    → inline below (WhatsApp + email; SMS providers TBD)
+//
+// TODO: When 5-6 SMS providers are implemented, extract auth.send_otp to
+//       src/modules/notifications/otp.handler.ts
+
+import { getDb } from "@scalius/database/client";
+import { processPaymentConfirmed, processPaymentFailed, releaseOrderInventory } from "@scalius/core/modules/payments/process-payment";
+import { processPolarWebhookRefund } from "@scalius/core/modules/payments/polar";
+import { sendOrderNotificationEmail, sendOrderNotification } from "@scalius/core/modules/notifications/notifications.service";
+import type { OrderNotificationType } from "@scalius/core/modules/notifications";
+import {
+  claimOrderNotificationOutboxForProcessing,
+  markOrderNotificationOutboxProcessingFailed,
+  markOrderNotificationOutboxSent,
+} from "@scalius/core/modules/notifications";
+import { sendEmail } from "@scalius/core/integrations/email";
+import { handleOrderIngestBatch, type OrderIngestQueueMessage } from "@scalius/core/modules/orders/orders.queue";
+import { getDecimalPlaces } from "@scalius/shared/currency";
+import { getActiveSmsProvider } from "@scalius/core/integrations/sms";
+import { getWhatsAppCloudApiSettings, sendWhatsAppTemplateMessage } from "@scalius/core/integrations/whatsapp";
+import { enqueueOrderCreatedNotificationForOrder } from "./utils/order-notification-queue";
+import {
+  claimAuthOtpDeliveryReceipt,
+  createAuthOtpDeliveryTarget,
+  createAuthOtpProviderClientReference,
+  markAuthOtpDeliveryReceiptAccepted,
+  markAuthOtpDeliveryReceiptFailed,
+  markAuthOtpDeliveryReceiptSkipped,
+  type AuthOtpDeliveryChannel,
+  type AuthOtpDeliveryReceiptResult,
+} from "@scalius/core/modules/customers/otp-delivery-receipts";
+import { escapeHtml } from "@scalius/shared/html-escape";
+import { getCredentialEncryptionKey } from "./utils/encryption-key";
+import { invalidateProductAvailabilityCaches } from "./utils/cache-invalidation";
+
+type PaymentConfirmationResult = Awaited<ReturnType<typeof processPaymentConfirmed>>;
+
+function assertPaymentConfirmed(
+  result: PaymentConfirmationResult,
+  gateway: "stripe" | "sslcommerz" | "polar",
+  orderId: string,
+): void {
+  if (!result.success) {
+    if (result.retryable === false) {
+      console.warn(
+        `[Queue] ${gateway} payment confirmation for order ${orderId} requires manual reconciliation: ${result.error ?? "unknown error"}`,
+      );
+      return;
+    }
+    throw new Error(`${gateway} payment confirmation failed for order ${orderId}: ${result.error ?? "unknown error"}`);
+  }
+}
+
+async function enqueueOrderCreatedAfterPaymentConfirmed(
+  db: ReturnType<typeof getDb>,
+  env: Env,
+  orderId: string,
+  gateway: "stripe" | "sslcommerz" | "polar",
+): Promise<void> {
+  const result = await enqueueOrderCreatedNotificationForOrder({
+    db,
+    queue: env.ORDER_NOTIFICATIONS_QUEUE,
+    orderId,
+    source: `payment-${gateway}-confirmed`,
+    retryOnQueueFailure: true,
+  });
+
+  if (!result.enqueued) {
+    console.warn(
+      `[Queue] order_created notification for confirmed ${gateway} order ${orderId} recorded but not enqueued: ${result.skippedReason}`,
+    );
+  }
+}
+
+// Re-export so webhook routes can import message types from one place.
+export type { OrderIngestQueueMessage } from "@scalius/core/modules/orders/orders.queue";
+
+export type PaymentQueueMessage =
+  | {
+    type: "payment.stripe.confirmed";
+    orderId: string;
+    paymentIntentId: string;
+    amount: number; // in smallest currency unit (cents, yen, fils — see ISO 4217)
+    currency: string;
+    chargeId?: string;
+    metadata?: Record<string, string>;
+  }
+  | {
+    type: "payment.stripe.failed";
+    orderId: string;
+    paymentIntentId: string;
+    failureCode?: string;
+    failureMessage?: string;
+  }
+  | {
+    type: "payment.stripe.canceled";
+    orderId: string;
+    paymentIntentId: string;
+  }
+  | {
+    type: "payment.stripe.refunded";
+    orderId: string;
+    paymentIntentId: string;
+    amountRefunded: number; // in smallest currency unit (cents, yen, fils — see ISO 4217)
+    chargeId: string;
+  }
+  | {
+    type: "payment.sslcommerz.confirmed";
+    orderId: string;
+    tranId: string;
+    valId: string;
+    bankTranId: string;
+    amount: number;
+    currency: string;
+    cardType?: string;
+    cardBrand?: string;
+    paymentType?: string;
+  }
+  | {
+    type: "payment.sslcommerz.failed";
+    orderId: string;
+    tranId: string;
+    status: string;
+  }
+  | {
+    type: "payment.polar.confirmed";
+    orderId: string;
+    checkoutId: string;
+    amount?: number; // in smallest currency unit (cents, yen, fils — see ISO 4217)
+    currency?: string;
+    paymentType?: string;
+    metadata?: Record<string, string>;
+  }
+  | {
+    type: "payment.polar.failed";
+    orderId: string;
+    checkoutId: string;
+    reason?: string;
+  }
+  | {
+    type: "payment.polar.refunded";
+    orderId: string;
+    polarCheckoutId: string;
+    amountRefunded: number; // in smallest currency unit (cents) — cumulative refunded amount from Polar
+    totalAmount: number; // in smallest currency unit (cents) — original total from Polar
+    currency: string;
+    polarStatus: string; // "refunded" (full) or "partially_refunded"
+  }
+  | {
+    type: "order.notification";
+    outboxId?: string;
+    orderId: string;
+    customerEmail?: string;
+    customerName: string;
+    notificationType: OrderNotificationType;
+    data?: Record<string, unknown>;
+  };
+
+export type AuthOtpQueueMessage =
+  | {
+    type: "auth.send_otp";
+    deliveryKey?: string;
+    purpose?: string;
+	    otpExpiresAt?: number;
+	    method: "email" | "phone";
+	    allowedMethod: string;
+	    channel?: "email" | "sms" | "whatsapp";
+	    identifier: string;
+    code: string;
+    name: string;
+  };
+
+// ── Queue batch handler ────────────────────────────────────────────────────
+
+/**
+ * Handle a batch of queue messages.
+ * Each message is processed independently; failures are retried by Cloudflare.
+ */
+export async function handleQueueBatch(
+  batch: MessageBatch<PaymentQueueMessage | AuthOtpQueueMessage | OrderIngestQueueMessage>,
+  env: Env,
+  executionCtx?: ExecutionContext,
+): Promise<void> {
+  const db = getDb(env);
+
+  // Order ingest uses a different strategy and must be routed by queue name so
+  // a mixed/manual batch is not cast wholesale to order messages.
+  if (batch.queue === "order-ingest" || batch.queue === "order-ingest-queue") {
+    await handleOrderIngestBatch(batch as unknown as MessageBatch<OrderIngestQueueMessage>, db, env);
+    const orderMessages = batch.messages as unknown as Message<OrderIngestQueueMessage>[];
+    await invalidateProductAvailabilityCaches(
+      db,
+      {
+        orderIds: orderMessages.map((msg) => msg.body.orderData.id),
+        variantIds: orderMessages.flatMap((msg) =>
+          msg.body.items
+            .map((item) => item.variantId)
+            .filter((variantId): variantId is string => typeof variantId === "string" && variantId.length > 0),
+        ),
+      },
+      { env, executionCtx },
+    );
+    return;
+  }
+
+  // Process each payment/notification/OTP message independently
+  const results = await Promise.allSettled(
+    batch.messages.map((msg) => processQueueMessage(
+      msg as unknown as Message<PaymentQueueMessage | AuthOtpQueueMessage>,
+      db,
+      env,
+      executionCtx,
+    )),
+  );
+
+  // Ack successful, retry failed with backoff
+  for (let i = 0; i < batch.messages.length; i++) {
+    const result = results[i];
+    const msg = batch.messages[i];
+    if (!result || !msg) continue;
+    if (result.status === "fulfilled") {
+      msg.ack();
+    } else {
+      console.error(`[Queue] Failed to process message ${msg.id}:`, result.status === "rejected" ? result.reason : "unknown");
+      msg.retry({ delaySeconds: 30 });
+    }
+  }
+}
+
+// ── Single message processor ───────────────────────────────────────────────
+
+/**
+ * Process a single payment, notification, or OTP queue message.
+ */
+async function processQueueMessage(
+  msg: Message<PaymentQueueMessage | AuthOtpQueueMessage>,
+  db: ReturnType<typeof getDb>,
+  env: Env,
+  executionCtx?: ExecutionContext,
+): Promise<void> {
+  const payload = msg.body;
+  console.log(`[Queue] Processing message type=${payload.type} id=${msg.id}`);
+
+  switch (payload.type) {
+    // ── Auth / OTP ─────────────────────────────────────────────────────────
+    // TODO: When SMS providers (Twilio, etc.) are finalized, extract this block
+    //       to src/modules/notifications/otp.handler.ts
+    case "auth.send_otp": {
+      await processAuthOtpQueueMessage(payload, msg.id, db, env);
+      break;
+    }
+
+    // ── Stripe ─────────────────────────────────────────────────────────────
+
+    case "payment.stripe.confirmed": {
+      // Convert smallest currency unit → major unit using ISO 4217 decimals.
+      // e.g. USD/BDT: ÷100, JPY: ÷1, BHD: ÷1000
+      const stripeDecimals = getDecimalPlaces(payload.currency);
+      const amountInMajor = payload.amount / Math.pow(10, stripeDecimals);
+      const result = await processPaymentConfirmed(db, {
+        orderId: payload.orderId,
+        paymentGateway: "stripe",
+        paymentType: (payload.metadata?.paymentType as "full" | "deposit" | "balance") ?? "full",
+        stripePaymentIntentId: payload.paymentIntentId,
+        stripeChargeId: payload.chargeId,
+        amount: amountInMajor,
+        metadata: { currency: payload.currency },
+      });
+      assertPaymentConfirmed(result, "stripe", payload.orderId);
+      if (result.success) {
+        await invalidateProductAvailabilityCaches(db, { orderIds: [payload.orderId] }, { env, executionCtx });
+        await enqueueOrderCreatedAfterPaymentConfirmed(db, env, payload.orderId, "stripe");
+      }
+      console.log(`[Queue] Stripe payment confirmed for order ${payload.orderId}`);
+      break;
+    }
+
+    case "payment.stripe.failed": {
+      await processPaymentFailed(db, payload.orderId, "stripe", payload.paymentIntentId);
+      console.log(`[Queue] Stripe payment failed for order ${payload.orderId}`);
+      break;
+    }
+
+    case "payment.stripe.canceled": {
+      await releaseOrderInventory(db, payload.orderId);
+      await invalidateProductAvailabilityCaches(db, { orderIds: [payload.orderId] }, { env, executionCtx });
+      console.log(`[Queue] Stripe payment cancelled, inventory released for order ${payload.orderId}`);
+      break;
+    }
+
+    case "payment.stripe.refunded": {
+      // Refunds are handled synchronously via the refund endpoint.
+      // This message exists for audit / notification purposes.
+      console.log(`[Queue] Stripe refund recorded for order ${payload.orderId}`);
+      break;
+    }
+
+    // ── SSLCommerz ─────────────────────────────────────────────────────────
+
+    case "payment.sslcommerz.confirmed": {
+      const result = await processPaymentConfirmed(db, {
+        orderId: payload.orderId,
+        paymentGateway: "sslcommerz",
+        paymentType: (payload.paymentType as "full" | "deposit" | "balance") ?? "full",
+        sslcommerzTranId: payload.tranId,
+        sslcommerzValId: payload.valId,
+        sslcommerzBankTranId: payload.bankTranId,
+        amount: payload.amount,
+        metadata: { currency: payload.currency, cardType: payload.cardType, cardBrand: payload.cardBrand },
+      });
+      assertPaymentConfirmed(result, "sslcommerz", payload.orderId);
+      if (result.success) {
+        await invalidateProductAvailabilityCaches(db, { orderIds: [payload.orderId] }, { env, executionCtx });
+        await enqueueOrderCreatedAfterPaymentConfirmed(db, env, payload.orderId, "sslcommerz");
+      }
+      console.log(`[Queue] SSLCommerz payment confirmed for order ${payload.orderId}`);
+      break;
+    }
+
+    case "payment.sslcommerz.failed": {
+      await processPaymentFailed(db, payload.orderId, "sslcommerz", payload.tranId);
+      console.log(`[Queue] SSLCommerz payment failed for order ${payload.orderId}`);
+      break;
+    }
+
+    // ── Polar ──────────────────────────────────────────────────────────────
+
+    case "payment.polar.confirmed": {
+      // Convert smallest currency unit → major unit using ISO 4217 decimals.
+      const polarCurrency = payload.currency ?? "usd";
+      const polarDecimals = getDecimalPlaces(polarCurrency);
+      const gatewayAmountMajor = (payload.amount ?? 0) / Math.pow(10, polarDecimals);
+
+      // If currency was converted (e.g. BDT→USD), the checkout metadata contains
+      // the original local-currency amount. Use it so paidAmount matches totalAmount's
+      // currency. Without this, a $8.40 USD payment would be recorded as ৳8.40 against
+      // a ৳1000 order, incorrectly marking it as partial.
+      const originalAmount = payload.metadata?.originalAmount
+        ? parseFloat(payload.metadata.originalAmount)
+        : null;
+      const recordAmount = originalAmount != null && !isNaN(originalAmount)
+        ? originalAmount
+        : gatewayAmountMajor;
+
+      const result = await processPaymentConfirmed(db, {
+        orderId: payload.orderId,
+        paymentGateway: "polar",
+        paymentType: (payload.paymentType as "full" | "deposit" | "balance") ?? "full",
+        polarCheckoutId: payload.checkoutId,
+        amount: recordAmount,
+        metadata: {
+          gatewayCurrency: polarCurrency,
+          gatewayAmount: gatewayAmountMajor,
+          exchangeRate: payload.metadata?.exchangeRate ?? "1",
+          ...payload.metadata,
+        },
+      });
+      assertPaymentConfirmed(result, "polar", payload.orderId);
+      if (result.success) {
+        await invalidateProductAvailabilityCaches(db, { orderIds: [payload.orderId] }, { env, executionCtx });
+        await enqueueOrderCreatedAfterPaymentConfirmed(db, env, payload.orderId, "polar");
+      }
+      console.log(`[Queue] Polar payment confirmed for order ${payload.orderId} (recorded: ${recordAmount}, gateway: ${gatewayAmountMajor} ${polarCurrency})`);
+      break;
+    }
+
+    case "payment.polar.failed": {
+      await processPaymentFailed(db, payload.orderId, "polar", payload.checkoutId);
+      console.log(`[Queue] Polar payment failed for order ${payload.orderId}`);
+      break;
+    }
+
+    case "payment.polar.refunded": {
+      // Unlike Stripe refunds (audit-only, since refunds are admin-initiated),
+      // Polar refunds can originate from the Polar dashboard or Polar's own
+      // dispute auto-refund system. We must update the DB to reflect the refund.
+      const result = await processPolarWebhookRefund(db, {
+        orderId: payload.orderId,
+        amountRefunded: payload.amountRefunded,
+        totalAmount: payload.totalAmount,
+        currency: payload.currency,
+        polarStatus: payload.polarStatus,
+      });
+      if (result.success) {
+        await invalidateProductAvailabilityCaches(db, { orderIds: [payload.orderId] }, { env, executionCtx });
+        console.log(`[Queue] Polar refund processed for order ${payload.orderId} (status: ${payload.polarStatus})`);
+      } else {
+        throw new Error(`Polar refund failed for order ${payload.orderId}: ${result.error}`);
+      }
+      break;
+    }
+
+    // ── Order notifications ────────────────────────────────────────────────
+
+    case "order.notification": {
+      const outboxClaim = payload.outboxId
+        ? await claimOrderNotificationOutboxForProcessing(db, payload.outboxId)
+        : undefined;
+
+      if (outboxClaim && !outboxClaim.claimed) {
+        console.log(`[Queue] Skipped order notification outbox ${payload.outboxId}: ${outboxClaim.reason}`);
+        break;
+      }
+
+      try {
+        // Customer notifications (email, SMS, etc.)
+        const encryptionKey = getCredentialEncryptionKey(env as unknown as Record<string, unknown>);
+        const customerNotificationResult = await sendOrderNotificationEmail(
+          payload.customerEmail,
+          payload.customerName,
+          payload.orderId,
+          payload.notificationType,
+          payload.data,
+          db,
+          {
+            encryptionKey,
+            migrationEncryptionKey: getCredentialEncryptionKey(env as unknown as Record<string, unknown>),
+            env: env as unknown as Record<string, unknown>,
+            outboxId: payload.outboxId,
+          },
+        );
+        const retryableFailures: string[] = customerNotificationResult?.hasRetryableFailure
+          ? [`customer channels: ${summarizeNotificationFailures(customerNotificationResult.outcomes)}`]
+          : [];
+
+        // Admin push notification — check admin channel settings before sending
+        try {
+          const { getAdminNotificationChannels } = await import("@scalius/core/modules/settings/settings.service");
+          const adminChannels = await getAdminNotificationChannels(db);
+          const enabledAdminChannels = adminChannels[payload.notificationType] || [];
+
+          if (enabledAdminChannels.includes("push")) {
+            const requestUrl = env.PUBLIC_API_BASE_URL || "http://localhost:8787";
+            const adminPushResult = await sendOrderNotification(db, {
+              id: payload.orderId,
+              customerName: payload.customerName,
+              notificationType: payload.notificationType,
+            }, env, requestUrl, {
+              outboxId: payload.outboxId,
+            });
+            if (adminPushResult?.hasRetryableFailure) {
+              retryableFailures.push(`admin push: ${summarizeNotificationFailures(adminPushResult.outcomes)}`);
+            }
+          }
+        } catch (fcmError) {
+          console.error(`[Queue] Admin notification check/send failed for ${payload.orderId}:`, fcmError);
+          retryableFailures.push(`admin push: ${fcmError instanceof Error ? fcmError.message : String(fcmError)}`);
+        }
+
+        if (retryableFailures.length > 0) {
+          throw new Error(`Order notification delivery failed for ${payload.orderId}: ${retryableFailures.join("; ")}`);
+        }
+
+        if (outboxClaim?.claimed) {
+          await markOrderNotificationOutboxSent(db, outboxClaim.outboxId, outboxClaim.claimId);
+        }
+      } catch (error) {
+        if (outboxClaim?.claimed) {
+          await markOrderNotificationOutboxProcessingFailed(
+            db,
+            outboxClaim.outboxId,
+            outboxClaim.claimId,
+            outboxClaim.attempts,
+            error,
+          ).catch((markError: unknown) => {
+            console.error("[Queue] Failed to mark order notification outbox failure:", markError);
+          });
+        }
+        throw error;
+      }
+      break;
+    }
+
+    default: {
+      console.warn(`[Queue] Unknown message type:`, (payload as Record<string, unknown>).type);
+    }
+  }
+}
+
+async function processAuthOtpQueueMessage(
+  payload: AuthOtpQueueMessage,
+  messageId: string,
+  db: ReturnType<typeof getDb>,
+  env: Env,
+): Promise<void> {
+  const channel = resolveAuthOtpDeliveryChannel(payload);
+  const target = await createAuthOtpDeliveryTarget({
+    deliveryKey: payload.deliveryKey ?? `legacy:${messageId}`,
+    purpose: payload.purpose ?? "customer_login",
+    method: payload.method,
+    channel,
+    provider: channel,
+    identifier: payload.identifier,
+    otpExpiresAt: payload.otpExpiresAt ?? null,
+  });
+  const claim = await claimAuthOtpDeliveryReceipt(db, target);
+
+  if (!claim.claimed) {
+    if (claim.reason === "accepted" || claim.reason === "delivered" || claim.reason === "skipped") {
+      console.log(`[Queue] Skipped OTP delivery ${target.deliveryKey}: already ${claim.reason}`);
+      return;
+    }
+    throw new Error(`OTP delivery receipt ${target.deliveryKey} is ${claim.reason}`);
+  }
+
+  try {
+    if (target.otpExpiresAt && target.otpExpiresAt <= Math.floor(Date.now() / 1000)) {
+      await markAuthOtpDeliveryReceiptSkipped(db, claim.receipt, "otp_expired", {
+        provider: target.provider,
+        providerStatus: "otp_expired",
+      });
+      console.log(`[Queue] Skipped expired OTP delivery ${target.deliveryKey}`);
+      return;
+    }
+
+    const result = await sendAuthOtpByChannel(payload, target, db, env);
+    await markAuthOtpDeliveryReceiptAccepted(db, claim.receipt, result);
+  } catch (error) {
+    await markAuthOtpDeliveryReceiptFailed(
+      db,
+      claim.receipt,
+      error,
+      getAuthOtpDeliveryFailureResult(error),
+    ).catch((markError: unknown) => {
+      console.error("[Queue] Failed to mark OTP delivery receipt failure:", markError);
+    });
+    throw error;
+  }
+}
+
+async function sendAuthOtpByChannel(
+  payload: AuthOtpQueueMessage,
+  target: { deliveryKey: string; channel: AuthOtpDeliveryChannel; identifierHash: string },
+  db: ReturnType<typeof getDb>,
+  env: Env,
+): Promise<AuthOtpDeliveryReceiptResult> {
+  if (payload.method === "email") {
+    return sendAuthOtpEmail(payload, target.deliveryKey, db, env);
+  }
+
+  if (payload.channel === "whatsapp" || payload.allowedMethod === "whatsapp_otp") {
+    return sendAuthOtpWhatsApp(payload, db, env);
+  }
+
+  return sendAuthOtpSms(payload, target, db, env);
+}
+
+async function sendAuthOtpEmail(
+  payload: AuthOtpQueueMessage,
+  deliveryKey: string,
+  db: ReturnType<typeof getDb>,
+  env: Env,
+): Promise<AuthOtpDeliveryReceiptResult> {
+  const encryptionKey = getCredentialEncryptionKey(env as unknown as Record<string, unknown>);
+  const safeName = escapeHtml(payload.name);
+  const safeCode = escapeHtml(payload.code);
+  const result = await sendEmail({
+    to: payload.identifier,
+    subject: "Your login code",
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="font-size: 20px; margin-bottom: 8px;">Your login code</h2>
+        <p style="color: #555; margin-bottom: 24px;">Hi ${safeName}, enter this code to sign in:</p>
+        <div style="background: #f5f5f5; border-radius: 12px; padding: 28px; text-align: center; margin-bottom: 24px;">
+          <span style="font-size: 40px; font-weight: 700; letter-spacing: 10px; font-family: monospace; color: #111;">${safeCode}</span>
+        </div>
+        <p style="color: #888; font-size: 13px;">This code expires in 5 minutes. If you didn't request this, you can ignore this email.</p>
+      </div>
+    `,
+    text: `Your login code is: ${payload.code}\n\nExpires in 5 minutes.`,
+    idempotencyKey: deliveryKey,
+  }, {
+    db,
+    env: env as unknown as Record<string, unknown>,
+    encryptionKey,
+  });
+
+  const receiptResult: AuthOtpDeliveryReceiptResult = {
+    provider: result.provider,
+    providerMessageId: result.providerRef,
+    providerStatus: result.rawStatus ?? (result.success ? "accepted" : "failed"),
+  };
+
+  if (!result.success) {
+    throw createAuthOtpDeliveryError(
+      `OTP email delivery unavailable: ${result.rawStatus ?? result.provider}`,
+      receiptResult,
+    );
+  }
+
+  console.log(`[Queue] Sent OTP email to ${payload.identifier}`);
+  return receiptResult;
+}
+
+async function sendAuthOtpWhatsApp(
+  payload: AuthOtpQueueMessage,
+  db: ReturnType<typeof getDb>,
+  env: Env,
+): Promise<AuthOtpDeliveryReceiptResult> {
+  const encryptionKey = getCredentialEncryptionKey(env as unknown as Record<string, unknown>);
+  const config = await getWhatsAppCloudApiSettings(db, encryptionKey, {
+    migrateLegacy: true,
+    migrationEncryptionKey: getCredentialEncryptionKey(env as unknown as Record<string, unknown>),
+  });
+  if (!config.accessToken || !config.phoneNumberId) {
+    throw createAuthOtpDeliveryError("WhatsApp credentials are not configured", {
+      provider: "whatsapp",
+      providerStatus: "missing_credentials",
+    });
+  }
+
+  const result = await sendWhatsAppTemplateMessage({
+    accessToken: config.accessToken,
+    phoneNumberId: config.phoneNumberId,
+    to: payload.identifier,
+    templateName: config.authTemplateName,
+    languageCode: "en_US",
+    bodyParameters: [payload.code],
+    buttonUrlParameter: payload.code,
+  });
+
+  const receiptResult: AuthOtpDeliveryReceiptResult = {
+    provider: "whatsapp",
+    providerMessageId: result.providerRef,
+    providerStatus: result.rawStatus,
+    rawResponse: result.rawResponse,
+  };
+
+  if (!result.success) {
+    throw createAuthOtpDeliveryError(`WhatsApp OTP delivery failed: ${result.rawStatus}`, {
+      provider: "whatsapp",
+      providerMessageId: result.providerRef,
+      providerStatus: result.rawStatus,
+      rawResponse: result.rawResponse,
+    });
+  }
+
+  console.log(`[Queue] Sent WhatsApp OTP to ${payload.identifier}`);
+  return receiptResult;
+}
+
+async function sendAuthOtpSms(
+  payload: AuthOtpQueueMessage,
+  target: { deliveryKey: string; channel: AuthOtpDeliveryChannel; identifierHash: string },
+  db: ReturnType<typeof getDb>,
+  env: Env,
+): Promise<AuthOtpDeliveryReceiptResult> {
+  const encryptionKey = getCredentialEncryptionKey(env as unknown as Record<string, unknown>);
+  const smsProvider = await getActiveSmsProvider(db, encryptionKey);
+  if (!smsProvider) {
+    throw createAuthOtpDeliveryError(
+      "SMS OTP requested but no SMS provider is configured. Configure an SMS provider in Auth & Access settings.",
+      { provider: "sms", providerStatus: "not_configured" },
+    );
+  }
+
+  const result = await smsProvider.sendSms({
+    to: payload.identifier,  // Already E.164 from customers.phone
+    message: `Your login code: ${payload.code}\n\nValid for 5 minutes. Do not share.`,
+    clientReference: createAuthOtpProviderClientReference(target),
+  });
+
+  const receiptResult: AuthOtpDeliveryReceiptResult = {
+    provider: smsProvider.name,
+    providerMessageId: result.providerRef,
+    providerStatus: result.rawStatus ?? (result.success ? "accepted" : "failed"),
+  };
+
+  if (!result.success) {
+    throw createAuthOtpDeliveryError(
+      `SMS OTP delivery failed via ${smsProvider.name}: ${result.rawStatus ?? "unknown provider status"}`,
+      receiptResult,
+    );
+  }
+
+  console.log(`[Queue] SMS OTP sent via ${smsProvider.name} to ${payload.identifier}, ref=${result.providerRef}`);
+  return receiptResult;
+}
+
+function resolveAuthOtpDeliveryChannel(payload: AuthOtpQueueMessage): AuthOtpDeliveryChannel {
+  if (payload.method === "email") return "email";
+  if (payload.channel === "whatsapp" || payload.allowedMethod === "whatsapp_otp") return "whatsapp";
+  return "sms";
+}
+
+type AuthOtpDeliveryError = Error & {
+  deliveryResult?: AuthOtpDeliveryReceiptResult;
+};
+
+function createAuthOtpDeliveryError(
+  message: string,
+  deliveryResult?: AuthOtpDeliveryReceiptResult,
+): AuthOtpDeliveryError {
+  const error = new Error(message) as AuthOtpDeliveryError;
+  error.deliveryResult = deliveryResult;
+  return error;
+}
+
+function getAuthOtpDeliveryFailureResult(error: unknown): AuthOtpDeliveryReceiptResult {
+  if (error instanceof Error && "deliveryResult" in error) {
+    return (error as AuthOtpDeliveryError).deliveryResult ?? {};
+  }
+  return {};
+}
+
+function summarizeNotificationFailures(
+  outcomes: Array<{ channel: string; provider: string; error?: string; providerStatus?: string | null; retryable: boolean }>,
+): string {
+  const failures = outcomes
+    .filter((outcome) => outcome.retryable)
+    .map((outcome) => `${outcome.channel}/${outcome.provider}:${outcome.error ?? outcome.providerStatus ?? "retryable"}`);
+
+  return failures.length > 0 ? failures.join(", ") : "retryable failure";
+}

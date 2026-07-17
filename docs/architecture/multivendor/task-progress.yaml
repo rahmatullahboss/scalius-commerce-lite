@@ -1,0 +1,430 @@
+program:
+  id: scalius-multivendor-canonical-architecture
+  title: Local-Owned Commerce Multi-Vendor Expansion
+  updated_at: 2026-07-17
+  architecture_status: accepted_for_local_implementation
+  implementation_status: marketplace_foundation_through_onboarding_resubmission_owner_race_guard_team_invitations_public_profiles_catalog_courier_fulfillment_customer_package_tracking_finance_event_reconciliation_payout_contract_cleanup_and_generated_api_contracts_implemented
+  release_status: local_only_not_approved_for_remote_deploy_or_migration
+  decision: expand_existing_repository_as_independent_project
+  product_model: seller_owned_products
+  accounting_model: immutable_double_entry_marketplace_subledger
+  migration_strategy: unapplied_foundation_replaced_then_forward_only_expansion
+  staff_entry_document: docs/architecture/multivendor/START-HERE-FOR-STAFF.md
+  owner_review_document: docs/architecture/multivendor/OWNER-REVIEW-GUIDE.md
+  current_progress_report: docs/architecture/multivendor/reports/2026-07-14-marketplace-implementation-progress.md
+  original_deployment_scope: historical_reference_only_not_a_target
+
+required_reading:
+  - AGENTS.md
+  - docs/architecture/multivendor/START-HERE-FOR-STAFF.md
+  - docs/architecture/multivendor/reports/2026-07-14-marketplace-implementation-progress.md
+  - docs/architecture/multivendor/README.md
+  - docs/architecture/multivendor/2026-07-13-target-architecture.md
+  - docs/architecture/multivendor/2026-07-13-migration-roadmap.md
+  - docs/architecture/multivendor/DATABASE-GOVERNANCE.md
+  - docs/architecture/multivendor/MARKETPLACE-DATABASE-CONTRACT.md
+  - docs/architecture/multivendor/task-progress.yaml
+  - docs/superpowers/plans/2026-07-13-multivendor-marketplace-implementation.md
+
+verified_environment_state:
+  audited_at: 2026-07-17
+  original_public_deployment:
+    status: out_of_scope
+    reason: repository_is_an_independent_project
+    action: active_runtime_and_deploy_connections_removed
+  active_runtime:
+    mode: local_only
+    api_name: marketplace-api-local
+    admin_name: marketplace-admin-local
+    storefront_name: marketplace-storefront-local
+    d1_name: marketplace-local-db
+    original_connection_isolation_check: passed
+    remote_mutation_guard: passed_fail_closed
+  local_d1:
+    status: fresh_disposable_rehearsal_verified
+    persist_path: .wrangler/marketplace-onboarding-verification
+    pending_migrations: 0
+    applied_migrations: 69
+    first_migration: 0000_cultured_newton_destine.sql
+    last_migration: 0068_vendor_profiles.sql
+    canonical_marketplace_tables: 21_of_21
+    platform_vendor_seed: approved
+    selected_critical_allocation_and_immutability_triggers: 8_of_8
+    remote_database_touched: false
+  source_control:
+    git_remote: private_github_origin_configured
+    repository: rahmatullahboss/scalius-commerce-lite
+    default_branch: main
+    working_tree: clean_after_release_commit
+    parallel_staff_work: allowed_after_main_sync
+    release_branch: main
+  verification:
+    migration_metadata: passed_69_sql_69_journal
+    project_isolation: passed
+    git_diff_check: passed
+    root_typecheck: passed_7_of_7_workspaces
+    storefront_diagnostics: zero_errors_warnings_hints
+    full_tests: passed
+    passed_test_files: 338
+    passed_tests: 1956
+    failed_tests: 0
+    playwright_browser_e2e: passed_10_of_10
+    lint: passed_with_existing_non_fatal_warnings
+    api_build: passed
+    admin_build: passed_with_non_fatal_chunk_size_warning
+    storefront_build: passed
+    deployment_dry_run: passed_without_remote_mutation
+
+migration_track:
+  status: selected_and_implemented
+  selected: A_unapplied_foundation_may_be_replaced
+  basis:
+    - owner_confirmed_0058_and_0059_never_applied
+    - original_public_deployment_is_not_this_projects_target
+    - fresh_local_d1_rehearsal_applied_0000_through_0068
+  canonical_foundation:
+    - packages/database/migrations/0058_create_vendors.sql
+    - packages/database/migrations/0059_vendor_order_split_foundation.sql
+  forward_expansion:
+    - packages/database/migrations/0060_marketplace_ledger_refunds.sql
+    - packages/database/migrations/0061_settlement_payouts.sql
+    - packages/database/migrations/0062_marketplace_ledger_transition_guards.sql
+    - packages/database/migrations/0063_payout_state_guards.sql
+    - packages/database/migrations/0064_payout_journal_state_guards.sql
+    - packages/database/migrations/0065_vendor_shipments.sql
+    - packages/database/migrations/0066_owner_application_race_guard.sql
+    - packages/database/migrations/0067_vendor_membership_invites.sql
+    - packages/database/migrations/0068_vendor_profiles.sql
+  future_rule: migrations_are_forward_only_after_any_shared_environment_use
+
+schema_coordination:
+  lock_status: active
+  current_integrator: current_chatgpt_session_for_owner_authorized_wip
+  next_schema_integrator: must_be_claimed_before_next_schema_task
+  high_contention_paths:
+    - packages/database/src/schema/index.ts
+    - packages/database/migrations/meta/_journal.json
+    - packages/database/migrations/meta
+    - packages/core/src/auth/rbac/route-permissions.ts
+    - packages/core/src/auth/rbac/permissions.ts
+    - packages/api-client
+    - pnpm-lock.yaml
+  rule: only_one_active_task_may_integrate_migration_metadata
+
+feature_flags:
+  marketplace.vendor_onboarding_write: disabled_by_default
+  marketplace.vendor_catalog_write: disabled_by_default
+  marketplace.public_vendor_catalog: disabled_by_default
+  marketplace.seller_order_actions: disabled_by_default
+  marketplace.ledger_posting: disabled_by_default
+  marketplace.settlement_release: disabled_by_default
+  marketplace.payout_write: disabled_by_default
+  marketplace.vendor_shipments: disabled_by_default
+
+current_claim:
+  task_ids:
+    - P01-T03
+    - P01-T04
+    - P01-T05
+    - P01-T06
+    - P02-T01
+    - P02-T02
+    - P02-T03
+    - P02-T04
+    - P02-T05
+    - P02-T07
+    - P03-T01
+    - P03-T02
+    - P03-T03
+    - P03-T04
+    - P03-T05
+    - P03-T06
+    - P03-T07
+    - P04-T01
+    - P04-T02
+    - P04-T03
+    - P04-T04
+    - P04-T05
+    - P05-T01
+    - P05-T02
+    - P05-T03
+    - P05-T04
+    - P05-T05
+    - P06-T01
+    - P06-T02
+    - P06-T03
+    - P06-T04
+    - P06-T05
+    - P07-T01
+    - P07-T02
+    - P07-T03
+    - P07-T04
+    - P07-T06
+  assignee: current_chatgpt_session
+  branch: mono-repo
+  worktree: existing_owner_authorized_wip_checkout
+  status: implementation_complete_pending_external_review_and_source_control_snapshot
+  schema_change: completed_migrations_0060_through_0068
+
+readiness_phase:
+  id: R00
+  status: local_readiness_complete_private_remote_pending
+  tasks:
+    - id: R00-T01
+      title: Preserve WIP in private remote snapshot
+      status: blocked_pending_owner_approved_remote
+    - id: R00-T02
+      title: Detach original Scalius deployment connections
+      status: completed
+    - id: R00-T03
+      title: Confirm and implement migration Track A
+      status: completed
+    - id: R00-T04
+      title: Repair clean-install root typecheck
+      status: completed
+    - id: R00-T05
+      title: Restore and preserve regression baseline
+      status: completed
+      evidence: full_suite_1956_of_1956
+    - id: R00-T06
+      title: Prove deployment dry run
+      status: completed
+      evidence: builds_and_dry_run_passed_without_remote_mutation
+
+phases:
+  - id: P00
+    title: Program freeze and safety repair
+    status: completed_local_verified
+    tasks:
+      - id: P00-T01
+        title: Confirm migration track and assign schema integration ownership
+        status: completed
+      - id: P00-T02
+        title: Add marketplace feature flags disabled by default
+        status: completed
+      - id: P00-T03
+        title: Enforce public sellable product predicate
+        status: completed
+      - id: P00-T04
+        title: Prevent stale seller allocation during order edits
+        status: completed_by_safe_blocking_and_immutable_snapshot_preservation
+      - id: P00-T05
+        title: Separate seller capabilities from platform RBAC
+        status: completed
+
+  - id: P01
+    title: Canonical vendor identity and catalog ownership
+    status: completed_local_verified
+    tasks:
+      - id: P01-T01
+        title: Create platform vendor and product ownership backfill
+        status: completed_in_0058_and_0059
+      - id: P01-T02
+        title: Make membership the sole owner authority
+        status: completed_with_one_active_owner_store_per_user_guard_and_hashed_invitation_authority
+      - id: P01-T03
+        title: Implement atomic vendor create owner and onboarding commands
+        status: completed_with_rejected_application_correction_resubmission_and_concurrent_race_mapping
+      - id: P01-T04
+        title: Encrypt and mask vendor payout methods
+        status: completed
+      - id: P01-T05
+        title: Add product moderation event history and state machine
+        status: completed
+      - id: P01-T06
+        title: Move vendor and moderation writes into core domain commands
+        status: completed_for_implemented_paths
+
+  - id: P02
+    title: Integer money and canonical seller order allocation
+    status: completed_local_verified
+    tasks:
+      - id: P02-T01
+        title: Add minor-unit and basis-point utilities
+        status: completed
+      - id: P02-T02
+        title: Add canonical order and item minor-unit snapshots
+        status: completed
+      - id: P02-T03
+        title: Add versioned commission rules
+        status: completed
+      - id: P02-T04
+        title: Implement deterministic seller allocation pure functions
+        status: completed
+      - id: P02-T05
+        title: Integrate atomic allocation into every order creation path
+        status: completed
+      - id: P02-T06
+        title: Backfill and reconcile historical seller allocation
+        status: completed_for_fresh_local_baseline_historical_shared_data_not_applicable
+      - id: P02-T07
+        title: Retire vendor_order_items as duplicated authority
+        status: completed_table_absent
+
+  - id: P03
+    title: Marketplace ledger and allocated refunds
+    status: completed_local_verified
+    tasks:
+      - id: P03-T01
+        title: Add domain outbox events
+        status: completed
+      - id: P03-T02
+        title: Add immutable balanced ledger journals and entries
+        status: completed
+      - id: P03-T03
+        title: Post captured payments idempotently
+        status: completed
+      - id: P03-T04
+        title: Add refunds and refund item allocations
+        status: completed
+      - id: P03-T05
+        title: Post refund reversals idempotently
+        status: completed
+      - id: P03-T06
+        title: Build and verify vendor balance projection
+        status: completed_with_successful_payment_refund_outbox_journal_evidence_detection
+      - id: P03-T07
+        title: Replace seller revenue dashboard with ledger queries
+        status: completed
+
+  - id: P04
+    title: Settlement release and payouts
+    status: completed_local_foundation_provider_certification_pending
+    tasks:
+      - id: P04-T01
+        title: Implement settlement eligibility and release journals
+        status: completed
+      - id: P04-T02
+        title: Add payout batches items and attempts
+        status: completed
+      - id: P04-T03
+        title: Reserve available balance atomically
+        status: completed
+      - id: P04-T04
+        title: Implement payout dispatch finalize and release
+        status: completed_domain_and_admin_workflow
+      - id: P04-T05
+        title: Add payout reconciliation and negative balance policy
+        status: completed
+
+  - id: P05
+    title: Seller fulfillment and shipments
+    status: completed_local_verified
+    tasks:
+      - id: P05-T01
+        title: Add vendor order state machine and versioning
+        status: completed
+      - id: P05-T02
+        title: Scope shipments to vendor orders
+        status: completed
+      - id: P05-T03
+        title: Add shipment item quantities
+        status: completed
+      - id: P05-T04
+        title: Adapt courier claims and webhook projection
+        status: completed_reusing_existing_pathao_steadfast_integration_live_provider_certification_remains_release_specific
+      - id: P05-T05
+        title: Add customer multi-package tracking projection
+        status: completed
+
+  - id: P06
+    title: Seller portal and public seller experience
+    status: completed_local_verified
+    tasks:
+      - id: P06-T01
+        title: Seller onboarding and catalog workflows
+        status: completed_with_secure_team_invitations_and_member_management
+      - id: P06-T02
+        title: Seller fulfillment workflows
+        status: completed
+      - id: P06-T03
+        title: Seller ledger balances and payout workflow visibility
+        status: completed_current_scope
+      - id: P06-T04
+        title: Public seller profile and product listing
+        status: completed_with_draft_published_profile_media_contact_visibility_seo_and_policy_fields
+      - id: P06-T05
+        title: Complete tenant isolation audit
+        status: completed_for_implemented_routes_with_negative_tests
+
+  - id: P07
+    title: Contract cleanup and release preparation
+    status: completed_local_verified_with_namespace_refactor_deferred
+    tasks:
+      - id: P07-T01
+        title: Stop remaining legacy seller financial dual writes
+        status: completed_vendor_orders_fulfillment_only_and_financial_writes_ledger_owned
+      - id: P07-T02
+        title: Remove remaining legacy copied seller financial reads
+        status: completed_seller_finance_settlement_and_payout_reads_ledger_derived
+      - id: P07-T03
+        title: Confirm no owner duplication or plaintext payout authority remains
+        status: completed_membership_is_owner_authority_and_payout_payloads_are_encrypted_masked
+      - id: P07-T04
+        title: Confirm no legacy REAL marketplace financial authority remains
+        status: completed_integer_minor_unit_marketplace_authority_legacy_real_fields_compatibility_only
+      - id: P07-T05
+        title: Rename vendorx and internal package namespace in dedicated refactor
+        status: deferred_requires_separate_approval
+      - id: P07-T06
+        title: Regenerate contracts and finalize database documentation
+        status: completed_openapi_311_routes_sdk_generated_database_contract_finalized
+
+release_gates:
+  source_control_snapshot:
+    status: private_remote_main_push_completed
+    branch: main
+    repository: rahmatullahboss/scalius-commerce-lite
+    requires: []
+  local_automated_verification:
+    status: passed
+    evidence:
+      - 338_test_files_passed
+      - 1956_tests_passed
+      - root_typecheck_7_of_7
+      - all_app_builds_passed
+      - playwright_marketplace_release_suite_10_of_10_passed
+      - 69_migrations_applied_0_pending_on_fresh_local_D1
+      - project_isolation_passed
+      - dist_secret_scan_passed
+      - deploy_dry_run_passed_without_remote_mutation
+  browser_end_to_end:
+    status: full_local_marketplace_release_journey_passed
+    evidence:
+      - api_admin_storefront_reachability_passed
+      - public_vendor_catalog_fail_closed_passed
+      - unauthenticated_seller_dashboard_redirect_passed
+      - authenticated_seller_dashboard_access_passed
+      - seller_application_submit_pending_approval_unlock_passed
+      - rejected_application_correction_resubmission_approval_passed
+      - published_seller_profile_public_storefront_passed
+      - seller_team_invitation_accept_role_suspend_reactivate_revoke_passed
+      - seller_product_and_payout_destination_moderation_passed
+      - checkout_allocation_fulfillment_delivery_cod_settlement_payout_refund_debt_projection_passed
+  security_review:
+    status: not_completed
+  financial_review:
+    status: not_completed
+  independent_cloudflare_environment:
+    status: not_provisioned
+  payout_provider_certification:
+    status: not_completed
+  production_release:
+    status: blocked
+
+known_limitations:
+  - real_payout_provider_not_connected_or_certified
+  - admin_build_emits_non_fatal_chunk_size_warning
+  - dedicated_security_and_financial_reviews_not_completed
+  - independent_cloudflare_release_environment_not_provisioned
+
+agent_rules:
+  - do_not_edit_shared_applied_migrations
+  - do_not_modify_high_contention_paths_without_integrator_claim
+  - do_not_use_REAL_for_new_marketplace_money
+  - do_not_authorize_seller_from_client_vendor_id_alone
+  - do_not_write_marketplace_finance_tables_directly_from_routes
+  - do_not_treat_vendor_order_totals_as_payout_balance
+  - do_not_expose_encrypted_payout_payload_or_raw_verification_storage_keys
+  - update_this_file_before_handoff
+  - never_run_remote_migration_or_deploy_without_owner_approved_release_packet

@@ -1,0 +1,220 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.6.0"
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare local build environment
+        run: pnpm dev:setup --skip-install --env-only
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Verify project isolation
+        run: pnpm check:isolation
+
+      - name: Verify migration metadata
+        run: pnpm --filter @scalius/database check:migrations
+
+      - name: Verify clean diff formatting
+        run: git diff --check
+
+  coverage:
+    name: Tests and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare test environment
+        run: pnpm dev:setup --skip-install --env-only
+
+      - name: Run complete Vitest suite with coverage floors
+        run: pnpm test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage/
+          if-no-files-found: warn
+          retention-days: 14
+
+  build:
+    name: Production builds
+    needs: [quality, coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare local build environment
+        run: pnpm dev:setup --skip-install --env-only
+
+      - name: Build all workspaces
+        run: pnpm build
+
+      - name: Check generated outputs for local env files
+        run: pnpm check:dist-secrets
+
+      - name: Package build outputs
+        run: tar -czf scalius-build-${{ github.sha }}.tar.gz apps/api/dist apps/admin-v2/dist apps/storefront/dist
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ github.sha }}
+          path: scalius-build-${{ github.sha }}.tar.gz
+          retention-days: 14
+
+  e2e:
+    name: Marketplace browser E2E
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Prepare local D1 and admin
+        run: pnpm dev:setup --skip-install
+
+      - name: Start API, Admin, and Storefront
+        run: |
+          nohup pnpm dev > /tmp/scalius-dev.log 2>&1 &
+          echo $! > /tmp/scalius-dev.pid
+
+      - name: Wait for local services
+        run: |
+          set -euo pipefail
+          for url in \
+            http://localhost:8787/api/v1/setup \
+            http://localhost:4323/auth/login \
+            http://localhost:4322/health; do
+            ready=false
+            for attempt in $(seq 1 90); do
+              if curl --fail --silent --show-error "$url" >/dev/null; then
+                ready=true
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ready" != "true" ]; then
+              echo "Service did not become ready: $url"
+              cat /tmp/scalius-dev.log || true
+              exit 1
+            fi
+          done
+
+      - name: Run full marketplace browser suite
+        run: pnpm test:e2e
+
+      - name: Collect service log
+        if: always()
+        run: |
+          mkdir -p test-results
+          cp /tmp/scalius-dev.log test-results/scalius-dev.log || true
+
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-${{ github.sha }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14

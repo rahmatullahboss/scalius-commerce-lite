@@ -1,0 +1,26 @@
+{
+  "name": "@scalius/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./schema": "./src/schema/index.ts",
+    "./client": "./src/client.ts",
+    "./types": "./src/types.ts"
+  },
+  "scripts": {
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "check:migrations": "node scripts/check-migration-metadata.mjs"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260613.1",
+    "@scalius/tsconfig": "workspace:*",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "6.0.3"
+  },
+  "license": "UNLICENSED"
+}

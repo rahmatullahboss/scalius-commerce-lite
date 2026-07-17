@@ -1,0 +1,62 @@
+# build output
+dist/
+.wrangler
+# generated types
+.astro/
+# copied during build (scripts/copy-flags.mjs)
+**/public/flags/
+
+# turbo
+.turbo/
+
+# dependencies
+node_modules/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+#docs
+.Docs/
+clerk-docs/
+astro-docs/
+# environment variables
+.env
+.env.development
+.env.local
+.env.*.local
+.dev.vars
+
+# private test suite (core team only)
+tests/
+
+# macOS-specific files
+.DS_Store
+
+# jetbrains setting folder
+.idea/
+.vercel
+/Docs
+!/docs/
+/.agent
+/.agents
+/.claude
+skills-lock.json
+/temp-doc
+/tanstack-router
+/docs/*
+!/docs/research/
+!/docs/research/*.md
+!/docs/architecture/
+!/docs/architecture/**
+!/docs/superpowers/
+!/docs/superpowers/plans/
+!/docs/superpowers/plans/*.md
+CLAUDE.md
+
+# Test and coverage artifacts
+/playwright-report/
+/test-results/
+/coverage/

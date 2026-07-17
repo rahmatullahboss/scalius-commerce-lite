@@ -1,0 +1,678 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import OrderSuccessButtons from "../components/OrderSuccessButtons";
+import { getOrderReceipt, getLayoutData, type OrderReceipt, type OrderItem, type LayoutData } from "@/lib/api";
+import {
+  createPurchaseTrackingPayload,
+  formatOrderSuccessLabel,
+  getOrderSuccessViewState,
+} from "@/lib/order-success-state";
+import {
+  canRetryOrderSuccessPayment,
+  getOrderSuccessRetryEndpoint,
+  normalizeRetryDepositAmount,
+  resolveOrderSuccessRetryPaymentType,
+} from "@/lib/order-success-payment-retry";
+
+
+const orderId = Astro.url.searchParams.get("orderId");
+const receiptToken = Astro.url.searchParams.get("token");
+const paymentResult = Astro.url.searchParams.get("result");
+const requestedPaymentType = Astro.url.searchParams.get("paymentType");
+const requestedDepositAmount = normalizeRetryDepositAmount(Astro.url.searchParams.get("depositAmount"));
+
+let order: OrderReceipt | null = null;
+let recoveryState: {
+  title: string;
+  message: string;
+  status: number;
+  showRetry: boolean;
+} | null = null;
+
+const layoutData: LayoutData | null = await getLayoutData();
+
+if (!orderId || !receiptToken) {
+  recoveryState = {
+    title: "We could not open this receipt",
+    message: "This order link is missing its private receipt proof. Sign in to your account to check your order history before placing another order.",
+    status: 400,
+    showRetry: false,
+  };
+} else {
+  try {
+    order = await getOrderReceipt(orderId, receiptToken);
+    if (!order) {
+      recoveryState = {
+        title: "Receipt temporarily unavailable",
+        message: "We could not load this receipt from the private order link. If the order was placed, it may still appear in your account history.",
+        status: 200,
+        showRetry: true,
+      };
+    }
+  } catch (e: unknown) {
+    console.error(`Error fetching order receipt for ID ${orderId}:`, e);
+    recoveryState = {
+      title: "Receipt temporarily unavailable",
+      message: "We could not load this receipt right now. Please retry or check your account order history.",
+      status: 200,
+      showRetry: true,
+    };
+  }
+}
+
+if (recoveryState) {
+  Astro.response.status = recoveryState.status;
+}
+
+const orderItemsFromApi: OrderItem[] = order?.items || [];
+const orderSuccessView = order ? getOrderSuccessViewState(order) : null;
+const retryPaymentType = order
+  ? resolveOrderSuccessRetryPaymentType(order, requestedPaymentType)
+  : null;
+const retryPaymentEndpoint = order && orderSuccessView && receiptToken && canRetryOrderSuccessPayment(order, orderSuccessView.kind, paymentResult)
+  ? getOrderSuccessRetryEndpoint(order.paymentMethod)
+  : null;
+const purchaseTrackingPayload =
+  order && orderSuccessView?.shouldFinalizeClientSide
+    ? createPurchaseTrackingPayload(order, orderItemsFromApi)
+    : null;
+import { DEFAULT_CURRENCY } from "@scalius/shared/currency";
+const currencySymbol = layoutData?.currency?.symbol ?? DEFAULT_CURRENCY.symbol;
+---
+
+<Layout title={orderSuccessView?.title ?? "Order Recovery"} layoutData={layoutData}>
+  <meta slot="head" name="robots" content="noindex,nofollow" />
+  <section
+    class="container mx-auto px-4 py-8 max-w-2xl"
+    data-fb-order-details={purchaseTrackingPayload ? JSON.stringify(purchaseTrackingPayload) : undefined}
+    data-order-success-state={orderSuccessView?.kind ?? "recovery"}
+    data-order-finalize={orderSuccessView?.shouldFinalizeClientSide ? "true" : "false"}
+  >
+    {order && orderSuccessView ? (
+    <div class="text-center mb-8 animate-fade-in">
+      {orderSuccessView.shouldFinalizeClientSide ? (
+        <div class="success-checkmark">
+          <div class="check-icon">
+            <span class="icon-line line-tip"></span>
+            <span class="icon-line line-long"></span>
+            <div class="icon-circle"></div>
+            <div class="icon-fix"></div>
+          </div>
+        </div>
+      ) : (
+        <div class={`mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full ${orderSuccessView.kind === "payment_issue" ? "bg-destructive/10 text-destructive" : "bg-amber-100 text-amber-700"}`}>
+          <svg class="h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={orderSuccessView.kind === "payment_issue" ? "M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" : "M12 6v6l4 2m6-2a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z"}></path>
+          </svg>
+        </div>
+      )}
+      <h1 class="text-2xl font-bold mb-2">{orderSuccessView.title}</h1>
+      <p class="text-gray-600">{orderSuccessView.message}</p>
+      {retryPaymentEndpoint && retryPaymentType && (
+        <div class="mt-5 flex flex-col items-center gap-2">
+          <button
+            type="button"
+            id="retryPaymentButton"
+            class="inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            data-endpoint={retryPaymentEndpoint}
+            data-order-id={order.id}
+            data-receipt-token={receiptToken}
+            data-payment-type={retryPaymentType}
+            data-deposit-amount={retryPaymentType === "deposit" && requestedDepositAmount ? String(requestedDepositAmount) : undefined}
+          >
+            Retry payment
+          </button>
+          <p id="retryPaymentMessage" class="min-h-5 text-sm text-muted-foreground" aria-live="polite"></p>
+        </div>
+      )}
+    </div>
+
+    <div class="space-y-6 animate-slide-up">
+      <!-- Order details sections -->
+      <div
+        class="bg-gray-50 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow"
+      >
+        <h2 class="text-lg font-medium mb-4 flex items-center">
+          <svg
+            class="w-5 h-5 mr-2 text-gray-700"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+            ></path>
+          </svg>
+          Order Details
+        </h2>
+        <div class="space-y-4">
+          <div class="flex justify-between">
+            <span class="text-gray-600">Order ID:</span>
+            <span class="font-medium">{order.id}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">Order Status:</span>
+            <span
+              class={`font-medium px-2 py-0.5 rounded-full text-sm ${orderSuccessView.badgeClass}`}
+              >{orderSuccessView.orderStatusLabel}</span
+            >
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">Payment Method:</span>
+            <span class="font-medium">{formatOrderSuccessLabel(order.paymentMethod)}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">Payment Status:</span>
+            <span
+              class={`font-medium px-2 py-0.5 rounded-full text-sm ${orderSuccessView.badgeClass}`}
+              >{orderSuccessView.paymentStatusLabel}</span
+            >
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">Total Amount:</span>
+            <span class="font-medium">{currencySymbol}{order.totalAmount.toFixed(2)}</span>
+          </div>
+          {
+            order.shippingCharge > 0 && (
+              <div class="flex justify-between">
+                <span class="text-gray-600">Shipping Charge:</span>
+                <span class="font-medium">
+                  {currencySymbol}{order.shippingCharge.toFixed(2)}
+                </span>
+              </div>
+            )
+          }
+          {
+            (order.discountAmount ?? 0) > 0 && (
+              <div class="flex justify-between">
+                <span class="text-gray-600">Discount:</span>
+                <span class="font-medium text-primary">
+                  -{currencySymbol}{(order.discountAmount ?? 0).toFixed(2)}
+                </span>
+              </div>
+            )
+          }
+          {
+            order.paidAmount > 0 && (
+              <div class="flex justify-between">
+                <span class="text-gray-600">Paid Amount:</span>
+                <span class="font-medium text-emerald-700">
+                  {currencySymbol}{order.paidAmount.toFixed(2)}
+                </span>
+              </div>
+            )
+          }
+          {
+            order.balanceDue > 0 && (
+              <div class="flex justify-between">
+                <span class="text-gray-600">Balance Due:</span>
+                <span class="font-medium">
+                  {currencySymbol}{order.balanceDue.toFixed(2)}
+                </span>
+              </div>
+            )
+          }
+        </div>
+      </div>
+
+      <div
+        class="bg-gray-50 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow"
+      >
+        <h2 class="text-lg font-medium mb-4 flex items-center">
+          <svg
+            class="w-5 h-5 mr-2 text-gray-700"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+            ></path>
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+          </svg>
+          Shipping Details
+        </h2>
+        <div class="space-y-2">
+          <p>
+            <span class="text-gray-600">Name:</span>{" "}
+            <span class="font-medium">{order.customerName}</span>
+          </p>
+          <p>
+            <span class="text-gray-600">Address:</span>{" "}
+            <span class="font-medium">{order.shippingAddress}</span>
+          </p>
+          <div class="flex flex-col items-center md:items-start">
+            <p class="flex items-center gap-1 text-sm">
+              <span class="text-gray-600">City:</span>{" "}
+              <span class="font-medium">{order.cityName || order.city}</span>
+            </p>
+            <p class="flex items-center gap-1 text-sm">
+              <span class="text-gray-600">Zone:</span>{" "}
+              <span class="font-medium">{order.zoneName || order.zone}</span>
+            </p>
+            {
+              (order.areaName || order.area) && (
+                <p class="flex items-center gap-1 text-sm">
+                  <span class="text-gray-600">Area:</span>{" "}
+                  <span class="font-medium">
+                    {order.areaName || order.area}
+                  </span>
+                </p>
+              )
+            }
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="bg-gray-50 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow"
+      >
+        <h2 class="text-lg font-medium mb-4 flex items-center">
+          <svg
+            class="w-5 h-5 mr-2 text-gray-700"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path>
+          </svg>
+          Order Items
+        </h2>
+        <div class="space-y-4">
+          {
+            orderItemsFromApi.map((item) => {
+              return (
+                <div class="flex justify-between items-center border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                  <div>
+                    <p class="font-medium">
+                      {item.productName || "Product Unavailable"}
+                    </p>
+                    {(item.variantSize || item.variantColor) && (
+                      <p class="text-xs text-gray-500 mt-1">
+                        {item.variantSize && (
+                          <span>Size: {item.variantSize}</span>
+                        )}
+                        {item.variantSize && item.variantColor && (
+                          <span> • </span>
+                        )}
+                        {item.variantColor && (
+                          <span>Color: {item.variantColor}</span>
+                        )}
+                      </p>
+                    )}
+                    <p class="text-sm text-gray-600 mt-1">
+                      Quantity: {item.quantity} × {currencySymbol}{item.price.toFixed(2)}
+                    </p>
+                  </div>
+                  <p class="font-medium">
+                    {currencySymbol}{(item.quantity * item.price).toFixed(2)}
+                  </p>
+                </div>
+              );
+            })
+          }
+        </div>
+      </div>
+    </div>
+
+    <OrderSuccessButtons client:load />
+    ) : (
+      <div class="mx-auto max-w-lg py-10 text-center">
+        <div class="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+          <svg class="h-8 w-8 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2Z"></path></svg>
+        </div>
+        <h1 class="mb-3 text-2xl font-bold text-foreground">{recoveryState?.title}</h1>
+        <p class="mb-4 text-muted-foreground">{recoveryState?.message}</p>
+        {orderId && (
+          <p class="mb-6 rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+            Reference: <span class="font-mono text-foreground">{orderId}</span>
+          </p>
+        )}
+        <div class="flex flex-col justify-center gap-3 sm:flex-row">
+          {recoveryState?.showRetry && (
+            <a href={Astro.url.pathname + Astro.url.search} class="inline-flex min-h-11 items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90">Retry Receipt</a>
+          )}
+          <a href="/account" class="inline-flex min-h-11 items-center justify-center rounded-lg border border-border px-5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted">View Account Orders</a>
+          <a href="/" class="inline-flex min-h-11 items-center justify-center rounded-lg border border-border px-5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted">Continue Shopping</a>
+        </div>
+      </div>
+    )}
+  </section>
+</Layout>
+
+<script>
+  import { trackFbPurchase } from "@/lib/analytics";
+  import { clearCheckoutSession } from "@/lib/checkout/session-state";
+  import type { PurchaseTrackingPayload } from "@/lib/order-success-state";
+  import { claimMetaPurchaseTracking } from "@/lib/tracking/meta-purchase-guard";
+  import { clearCart } from "@/store/cart";
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const mainElement = document.querySelector(
+      "[data-order-finalize='true'][data-fb-order-details]"
+    ) as HTMLElement | null;
+    if (!mainElement) {
+      return;
+    }
+
+    const orderDataAttr = mainElement.dataset.fbOrderDetails;
+    if (!orderDataAttr) {
+      console.error("FB Purchase: Missing data attribute on main element.");
+      return;
+    }
+
+    try {
+      const parsedData: PurchaseTrackingPayload = JSON.parse(orderDataAttr);
+      const { order, items: orderItems } = parsedData;
+
+      clearCheckoutSession();
+      clearCart();
+
+      setTimeout(() => {
+        if (!order || !orderItems) {
+          console.warn("Order data not available for FB Purchase tracking.");
+          return;
+        }
+
+        const claim = claimMetaPurchaseTracking(order.id);
+        if (!claim.shouldSend) {
+          console.info("FB Purchase event already tracked for order:", order.id);
+          return;
+        }
+
+        trackFbPurchase(
+          {
+            order_id: order.id,
+            content_name: `Order ${order.id}`,
+            content_ids: orderItems.map(
+              (item) => item.variantId || item.productId
+            ),
+            content_type: "product_group",
+            contents: orderItems.map((item) => ({
+              id: item.variantId || item.productId,
+              quantity: item.quantity,
+              item_price: item.price,
+            })),
+            currency: window.__CURRENCY_CODE__ || "BDT",
+            num_items: orderItems.reduce(
+              (sum, item) => sum + item.quantity,
+              0
+            ),
+            value: order.totalAmount,
+          },
+          {},
+          { eventId: claim.eventId }
+        );
+        console.log("FB Purchase event tracked for order:", order.id);
+      }, 500);
+    } catch (error: unknown) {
+      console.error("FB Purchase: Error parsing data attribute:", error);
+    }
+  });
+</script>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const button = document.getElementById("retryPaymentButton") as HTMLButtonElement | null;
+    const message = document.getElementById("retryPaymentMessage");
+    if (!button) return;
+
+    button.addEventListener("click", async () => {
+      const endpoint = button.dataset.endpoint;
+      const orderId = button.dataset.orderId;
+      const receiptToken = button.dataset.receiptToken;
+      const paymentType = button.dataset.paymentType || "full";
+      const depositAmount = Number(button.dataset.depositAmount);
+
+      if (!endpoint || !orderId || !receiptToken) {
+        if (message) message.textContent = "Payment retry is unavailable for this order.";
+        return;
+      }
+
+      button.disabled = true;
+      const previousText = button.textContent || "Retry payment";
+      button.textContent = "Opening payment...";
+      if (message) message.textContent = "";
+
+      try {
+        const payload: Record<string, unknown> = {
+          orderId,
+          receiptToken,
+          paymentType,
+          currency: window.__CURRENCY_CODE__ || "BDT",
+        };
+        if (paymentType === "deposit" && Number.isFinite(depositAmount) && depositAmount > 0) {
+          payload.depositAmount = depositAmount;
+        }
+
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => ({} as Record<string, unknown>));
+        if (!response.ok) {
+          const error = typeof data.error === "string" ? data.error : "Could not start payment. Please try again.";
+          throw new Error(error);
+        }
+        const gatewayUrl = typeof data.gatewayUrl === "string" ? data.gatewayUrl : "";
+        if (!gatewayUrl) {
+          throw new Error("Payment gateway did not return a redirect URL.");
+        }
+        window.location.href = gatewayUrl;
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previousText;
+        if (message) {
+          message.textContent = error instanceof Error ? error.message : "Could not start payment. Please try again.";
+        }
+      }
+    });
+  });
+</script>
+
+<style>
+  /* Success checkmark animation */
+  .success-checkmark {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 20px;
+    position: relative;
+  }
+
+  .success-checkmark .check-icon {
+    width: 80px;
+    height: 80px;
+    position: relative;
+    border-radius: 50%;
+    box-sizing: content-box;
+    border: 4px solid var(--color-primary);
+  }
+
+  .success-checkmark .check-icon::before {
+    top: 3px;
+    left: -2px;
+    width: 30px;
+    transform-origin: 100% 50%;
+    border-radius: 100px 0 0 100px;
+  }
+
+  .success-checkmark .check-icon::after {
+    top: 0;
+    left: 30px;
+    width: 60px;
+    transform-origin: 0 50%;
+    border-radius: 0 100px 100px 0;
+    animation: rotate-circle 4.25s ease-in;
+  }
+
+  .success-checkmark .check-icon::before,
+  .success-checkmark .check-icon::after {
+    content: "";
+    height: 100px;
+    position: absolute;
+    background: #ffffff;
+    transform: rotate(-45deg);
+  }
+
+  .success-checkmark .check-icon .icon-line {
+    display: block;
+    border-radius: 2px;
+    position: absolute;
+    z-index: 10;
+  }
+
+  .success-checkmark .check-icon .icon-line.line-tip {
+    top: 46px;
+    left: 14px;
+    width: 25px;
+    transform: rotate(45deg);
+    animation: icon-line-tip 0.75s;
+  }
+
+  .success-checkmark .check-icon .icon-line.line-long {
+    top: 38px;
+    right: 8px;
+    width: 47px;
+    transform: rotate(-45deg);
+    animation: icon-line-long 0.75s;
+  }
+
+  .success-checkmark .check-icon .icon-circle {
+    top: -4px;
+    left: -4px;
+    z-index: 10;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    position: absolute;
+    box-sizing: content-box;
+    border: 4px solid var(--color-primary);
+  }
+
+  .success-checkmark .check-icon .icon-fix {
+    top: 8px;
+    width: 5px;
+    left: 26px;
+    z-index: 1;
+    height: 85px;
+    position: absolute;
+    transform: rotate(-45deg);
+    background-color: #ffffff;
+  }
+
+  @keyframes rotate-circle {
+    0% {
+      transform: rotate(-45deg);
+    }
+    5% {
+      transform: rotate(-45deg);
+    }
+    12% {
+      transform: rotate(-405deg);
+    }
+    100% {
+      transform: rotate(-405deg);
+    }
+  }
+
+  @keyframes icon-line-tip {
+    0% {
+      width: 0;
+      left: 1px;
+      top: 19px;
+    }
+    54% {
+      width: 0;
+      left: 1px;
+      top: 19px;
+    }
+    70% {
+      width: 50px;
+      left: -8px;
+      top: 37px;
+    }
+    84% {
+      width: 17px;
+      left: 21px;
+      top: 48px;
+    }
+    100% {
+      width: 25px;
+      left: 14px;
+      top: 46px;
+    }
+  }
+
+  @keyframes icon-line-long {
+    0% {
+      width: 0;
+      right: 46px;
+      top: 54px;
+    }
+    65% {
+      width: 0;
+      right: 46px;
+      top: 54px;
+    }
+    84% {
+      width: 55px;
+      right: 0px;
+      top: 35px;
+    }
+    100% {
+      width: 47px;
+      right: 8px;
+      top: 38px;
+    }
+  }
+
+  /* Fade in animation */
+  .animate-fade-in {
+    animation: fadeIn 1s ease-out forwards;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* Slide up animation */
+  .animate-slide-up {
+    animation: slideUp 0.8s ease-out forwards;
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Card hover effect */
+  .transition-shadow {
+    transition: box-shadow 0.3s ease;
+  }
+</style>

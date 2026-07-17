@@ -1,0 +1,126 @@
+{
+  "name": "marketplace-api-local",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-02-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public",
+    "disable_nodejs_process_v2"
+  ],
+  "limits": {
+    "cpu_ms": 300000
+  },
+  // Local-owned placeholder configuration. Remote deploy is blocked by scripts/deploy-guard.mjs
+  // until new Cloudflare resources are provisioned and explicitly approved.
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "marketplace-local-db",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "../../packages/database/migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "00000000000000000000000000000001"
+    },
+    {
+      "binding": "SHARED_AUTH_CACHE",
+      "id": "00000000000000000000000000000002"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "marketplace-local-media"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WidgetDesignAgent",
+        "class_name": "WidgetDesignAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "widget_design_agent_v1",
+      "new_sqlite_classes": ["WidgetDesignAgent"]
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "PAYMENT_EVENTS_QUEUE",
+        "queue": "marketplace-local-payment-events"
+      },
+      {
+        "binding": "ORDER_NOTIFICATIONS_QUEUE",
+        "queue": "marketplace-local-order-notifications"
+      },
+      {
+        "binding": "AUTH_OTP_QUEUE",
+        "queue": "marketplace-local-auth-otp"
+      },
+      {
+        "binding": "ORDER_INGEST_QUEUE",
+        "queue": "marketplace-local-order-ingest"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "marketplace-local-payment-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "marketplace-local-payment-events-dlq"
+      },
+      {
+        "queue": "marketplace-local-order-notifications",
+        "max_batch_size": 20,
+        "max_batch_timeout": 3,
+        "max_retries": 3,
+        "dead_letter_queue": "marketplace-local-order-notifications-dlq"
+      },
+      {
+        "queue": "marketplace-local-auth-otp",
+        "max_batch_size": 10,
+        "max_batch_timeout": 2,
+        "max_retries": 5,
+        "dead_letter_queue": "marketplace-local-auth-otp-dlq"
+      },
+      {
+        "queue": "marketplace-local-order-ingest",
+        "max_batch_size": 100,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "dead_letter_queue": "marketplace-local-order-ingest-dlq"
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "vars": {
+    "PUBLIC_API_BASE_URL": "http://localhost:8787",
+    "BETTER_AUTH_URL": "http://localhost:4323",
+    "STOREFRONT_URL": "http://localhost:4322",
+    "CDN_DOMAIN_URL": "localhost:8787",
+    "R2_PUBLIC_URL": "http://localhost:8787/api/v1/media",
+    "PURGE_URL": "http://localhost:4322/api/purge-cache"
+  }
+}

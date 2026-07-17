@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.6.0"
+
+jobs:
+  release:
+    name: Build and publish release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare local build environment
+        run: pnpm dev:setup --skip-install --env-only
+
+      - name: Run tests with coverage floors
+        run: pnpm test:coverage
+
+      - name: Build production bundles
+        run: pnpm build
+
+      - name: Verify dist outputs
+        run: pnpm check:dist-secrets
+
+      - name: Package release artifacts
+        run: |
+          tar -czf scalius-commerce-${GITHUB_REF_NAME}.tar.gz \
+            apps/api/dist \
+            apps/admin-v2/dist \
+            apps/storefront/dist \
+            packages/database/migrations \
+            README.md \
+            LICENSE
+          tar -czf scalius-coverage-${GITHUB_REF_NAME}.tar.gz coverage
+          shasum -a 256 \
+            scalius-commerce-${GITHUB_REF_NAME}.tar.gz \
+            scalius-coverage-${GITHUB_REF_NAME}.tar.gz \
+            > SHA256SUMS.txt
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              scalius-commerce-${GITHUB_REF_NAME}.tar.gz \
+              scalius-coverage-${GITHUB_REF_NAME}.tar.gz \
+              SHA256SUMS.txt \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              scalius-commerce-${GITHUB_REF_NAME}.tar.gz \
+              scalius-coverage-${GITHUB_REF_NAME}.tar.gz \
+              SHA256SUMS.txt \
+              --generate-notes \
+              --verify-tag \
+              --title "$GITHUB_REF_NAME"
+          fi

@@ -1,0 +1,166 @@
+name: Deploy Cloudflare
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment target
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - api
+          - admin
+          - storefront
+          - migrations
+      dry_run:
+        description: Validate only; do not mutate remote Cloudflare resources
+        required: true
+        default: true
+        type: boolean
+      confirmation:
+        description: Type DEPLOY for a real production deployment
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-production
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.6.0"
+
+jobs:
+  validate:
+    name: Validate deployment candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Require canonical main branch
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "Deployments must be dispatched from main."
+            exit 1
+          fi
+
+      - name: Validate real-deploy confirmation
+        if: inputs.dry_run == false
+        run: |
+          if [ "${{ inputs.confirmation }}" != "DEPLOY" ]; then
+            echo "A real deployment requires confirmation=DEPLOY."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare validation environment
+        run: pnpm dev:setup --skip-install --env-only
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test with coverage floors
+        run: pnpm test:coverage
+
+      - name: Validate deploy pipeline without remote mutation
+        run: |
+          case "${{ inputs.target }}" in
+            all)
+              node scripts/deploy.mjs --dry-run
+              ;;
+            migrations)
+              node scripts/deploy.mjs --migrate-only --dry-run
+              ;;
+            api|admin|storefront)
+              node scripts/deploy.mjs --only "${{ inputs.target }}" --dry-run
+              ;;
+            *)
+              echo "Unsupported target: ${{ inputs.target }}"
+              exit 1
+              ;;
+          esac
+
+  deploy:
+    name: Deploy to production
+    needs: validate
+    if: inputs.dry_run == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_STOREFRONT_URL }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      MARKETPLACE_REMOTE_DEPLOY_APPROVED: "YES"
+    steps:
+      - name: Checkout verified commit
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Require Cloudflare credentials
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "Configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the production environment."
+            exit 1
+          fi
+
+      - name: Deploy selected target
+        run: |
+          case "${{ inputs.target }}" in
+            all)
+              pnpm deploy
+              ;;
+            api)
+              pnpm deploy:api
+              ;;
+            admin)
+              pnpm deploy:admin
+              ;;
+            storefront)
+              pnpm deploy:storefront
+              ;;
+            migrations)
+              node scripts/deploy.mjs --migrate-only
+              ;;
+            *)
+              echo "Unsupported target: ${{ inputs.target }}"
+              exit 1
+              ;;
+          esac

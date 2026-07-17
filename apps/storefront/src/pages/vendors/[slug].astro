@@ -1,0 +1,240 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import ProductCard from "@/components/cards/ProductCard.astro";
+import {
+  getLayoutData,
+  getPublicVendorCatalog,
+  type LayoutData,
+  type Product,
+  type ProductListOptions,
+} from "@/lib/api";
+import {
+  getRuntimeStorefrontUrl,
+  setRuntimeImageCdnPolicy,
+} from "@/lib/api/runtime-env";
+import { DEFAULT_CURRENCY } from "@scalius/shared/currency";
+import { Store, ChevronLeft, ChevronRight } from "lucide-react";
+
+const { slug } = Astro.params;
+if (!slug) return new Response(null, { status: 404 });
+
+const rawPage = Number(Astro.url.searchParams.get("page") ?? 1);
+const currentPage = Math.min(Math.max(Number.isFinite(rawPage) ? Math.trunc(rawPage) : 1, 1), 10_000);
+const requestedSort = Astro.url.searchParams.get("sort") ?? "newest";
+const allowedSorts = new Set<ProductListOptions["sort"]>([
+  "newest",
+  "price-asc",
+  "price-desc",
+  "name-asc",
+  "name-desc",
+  "discount",
+]);
+const sort = allowedSorts.has(requestedSort as ProductListOptions["sort"])
+  ? requestedSort as ProductListOptions["sort"]
+  : "newest";
+
+let layoutData: LayoutData | null = null;
+let catalog: Awaited<ReturnType<typeof getPublicVendorCatalog>> = null;
+try {
+  [layoutData, catalog] = await Promise.all([
+    getLayoutData(),
+    getPublicVendorCatalog(slug, { page: currentPage, limit: 20, sort }),
+  ]);
+  setRuntimeImageCdnPolicy(layoutData?.media);
+} catch (error: unknown) {
+  console.error(`Failed to load seller storefront ${slug}:`, error);
+}
+
+if (!catalog) return new Response(null, { status: 404 });
+
+const { vendor, profile, pagination } = catalog;
+const products: Product[] = catalog.products;
+if (pagination.totalPages > 0 && currentPage > pagination.totalPages) {
+  const redirectUrl = new URL(Astro.url);
+  redirectUrl.searchParams.set("page", pagination.totalPages.toString());
+  return Astro.redirect(`${redirectUrl.pathname}${redirectUrl.search}`);
+}
+
+const storefrontUrl = getRuntimeStorefrontUrl();
+const canonicalUrl = `${storefrontUrl}/vendors/${slug}`;
+const currencySymbol = layoutData?.currency?.symbol ?? DEFAULT_CURRENCY.symbol;
+const pageTitle = profile?.seoTitle || `${vendor.name} — Seller Store`;
+const pageDescription = profile?.seoDescription || profile?.description || `Browse approved products from ${vendor.name}.`;
+
+function getPaginationUrl(pageNum: number): string {
+  const url = new URL(Astro.url);
+  url.searchParams.set("page", pageNum.toString());
+  if (sort === "newest") url.searchParams.delete("sort");
+  else url.searchParams.set("sort", sort ?? "newest");
+  return `${url.pathname}${url.search}`;
+}
+
+function paginationLinks(current: number, total: number): Array<number | "…"> {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+  if (current <= 4) return [1, 2, 3, 4, 5, "…", total];
+  if (current >= total - 3) return [1, "…", total - 4, total - 3, total - 2, total - 1, total];
+  return [1, "…", current - 1, current, current + 1, "…", total];
+}
+
+const sellerJsonLd = JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "Store",
+  name: vendor.name,
+  url: canonicalUrl,
+  description: profile?.description || undefined,
+  image: profile?.logoUrl || profile?.bannerUrl || undefined,
+  email: profile?.publicEmail || undefined,
+  telephone: profile?.publicPhone || undefined,
+  openingHours: profile?.supportHours || undefined,
+  numberOfItems: pagination.total,
+});
+---
+
+<Layout
+  title={pageTitle}
+  description={pageDescription}
+  layoutData={layoutData}
+  canonicalUrl={canonicalUrl}
+  ogType="website"
+>
+  <Fragment slot="head">
+    <script is:inline type="application/ld+json" set:html={sellerJsonLd} />
+  </Fragment>
+
+  <main class="min-h-screen bg-gray-50">
+    <section class="border-b border-gray-100 bg-white">
+      <div class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+        {profile?.bannerUrl ? (
+          <img
+            src={profile.bannerUrl}
+            alt={profile.bannerAlt || `${vendor.name} store banner`}
+            class="mb-6 h-40 w-full rounded-3xl object-cover sm:h-56"
+            loading="eager"
+          />
+        ) : null}
+        <nav class="mb-5 text-sm text-gray-500" aria-label="Breadcrumb">
+          <a href="/" class="hover:text-gray-900">Home</a>
+          <span class="mx-2 text-gray-300">/</span>
+          <span class="font-medium text-gray-900">{vendor.name}</span>
+        </nav>
+
+        <div class="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex items-center gap-4">
+            <div class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary/10 text-primary">
+              {profile?.logoUrl ? (
+                <img src={profile.logoUrl} alt={profile.logoAlt || `${vendor.name} logo`} class="h-full w-full object-cover" />
+              ) : (
+                <Store className="h-7 w-7" />
+              )}
+            </div>
+            <div>
+              <p class="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Verified seller</p>
+              <h1 class="mt-1 text-3xl font-bold tracking-tight text-gray-950 sm:text-4xl">{vendor.name}</h1>
+              <p class="mt-2 text-gray-500">{pagination.total} approved products</p>
+            </div>
+          </div>
+
+          <form method="get" class="flex items-center gap-2">
+            <label for="seller-sort" class="text-sm font-medium text-gray-600">Sort</label>
+            <select
+              id="seller-sort"
+              name="sort"
+              class="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm"
+              onchange="this.form?.submit()"
+            >
+              <option value="newest" selected={sort === "newest"}>Newest</option>
+              <option value="price-asc" selected={sort === "price-asc"}>Price: low to high</option>
+              <option value="price-desc" selected={sort === "price-desc"}>Price: high to low</option>
+              <option value="name-asc" selected={sort === "name-asc"}>Name: A–Z</option>
+              <option value="discount" selected={sort === "discount"}>Best discount</option>
+            </select>
+          </form>
+        </div>
+
+        {profile?.description || profile?.publicEmail || profile?.publicPhone || profile?.supportHours ? (
+          <div class="mt-6 grid gap-4 rounded-2xl bg-gray-50 p-5 md:grid-cols-[minmax(0,1fr)_auto]">
+            <div>
+              {profile?.description ? <p class="max-w-3xl whitespace-pre-line text-gray-700">{profile.description}</p> : null}
+            </div>
+            <div class="space-y-1 text-sm text-gray-600">
+              {profile?.publicEmail ? <p><span class="font-medium text-gray-900">Email:</span> <a class="hover:text-primary" href={`mailto:${profile.publicEmail}`}>{profile.publicEmail}</a></p> : null}
+              {profile?.publicPhone ? <p><span class="font-medium text-gray-900">Phone:</span> <a class="hover:text-primary" href={`tel:${profile.publicPhone}`}>{profile.publicPhone}</a></p> : null}
+              {profile?.supportHours ? <p><span class="font-medium text-gray-900">Support:</span> {profile.supportHours}</p> : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      {profile?.returnPolicy ? (
+        <details class="mb-6 rounded-2xl border border-gray-200 bg-white p-5">
+          <summary class="cursor-pointer font-semibold text-gray-900">Seller return policy</summary>
+          <p class="mt-3 whitespace-pre-line text-sm leading-6 text-gray-600">{profile.returnPolicy}</p>
+        </details>
+      ) : null}
+      {
+        products.length > 0 ? (
+          <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {products.map((product) => (
+              <ProductCard product={product} currencySymbol={currencySymbol} />
+            ))}
+          </div>
+        ) : (
+          <div class="rounded-3xl border border-dashed border-gray-200 bg-white px-6 py-20 text-center">
+            <Store className="mx-auto h-10 w-10 text-gray-300" />
+            <h2 class="mt-4 text-xl font-semibold text-gray-900">No products available</h2>
+            <p class="mt-2 text-gray-500">This seller has no approved products at the moment.</p>
+          </div>
+        )
+      }
+
+      {
+        pagination.totalPages > 1 && (
+          <nav class="mt-10 flex items-center justify-center gap-2" aria-label="Seller catalog pagination">
+            <a
+              href={getPaginationUrl(Math.max(1, pagination.page - 1))}
+              aria-disabled={pagination.page <= 1}
+              class:list={[
+                "flex h-10 w-10 items-center justify-center rounded-xl border bg-white",
+                pagination.page <= 1 ? "pointer-events-none opacity-40" : "hover:border-primary hover:text-primary",
+              ]}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </a>
+            {paginationLinks(pagination.page, pagination.totalPages).map((pageItem) =>
+              pageItem === "…" ? (
+                <span class="px-2 text-gray-400">…</span>
+              ) : (
+                <a
+                  href={getPaginationUrl(pageItem)}
+                  aria-current={pageItem === pagination.page ? "page" : undefined}
+                  class:list={[
+                    "flex h-10 min-w-10 items-center justify-center rounded-xl border px-3 text-sm font-semibold",
+                    pageItem === pagination.page
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-gray-200 bg-white hover:border-primary hover:text-primary",
+                  ]}
+                >
+                  {pageItem}
+                </a>
+              ),
+            )}
+            <a
+              href={getPaginationUrl(Math.min(pagination.totalPages, pagination.page + 1))}
+              aria-disabled={pagination.page >= pagination.totalPages}
+              class:list={[
+                "flex h-10 w-10 items-center justify-center rounded-xl border bg-white",
+                pagination.page >= pagination.totalPages
+                  ? "pointer-events-none opacity-40"
+                  : "hover:border-primary hover:text-primary",
+              ]}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </a>
+          </nav>
+        )
+      }
+    </section>
+  </main>
+</Layout>

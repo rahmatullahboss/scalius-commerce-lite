@@ -1,0 +1,420 @@
+// src/lib/rbac/auto-seed.ts
+// Auto-seeds permissions, roles, and sets first admin as super admin on first access
+
+import { eq, count, asc, inArray } from "drizzle-orm";
+import type { Database } from "@scalius/database/client";
+import {
+  user,
+  permissions,
+  roles,
+  rolePermissions,
+} from "@scalius/database/schema";
+import { PERMISSIONS, getAllPermissions } from "./permissions";
+
+// Track if seeding has been checked this isolate lifecycle.
+// Reset to false on each new deployment (fresh isolate). The optional KV marker
+// below also needs to expire or be purged after an intentional manual DB reset.
+let seedingChecked = false;
+const RBAC_SEED_CACHE_PREFIX = "rbac:seed-current:v1";
+const RBAC_SEED_CACHE_TTL_SECONDS = 6 * 60 * 60;
+
+type SystemRoleSeed = {
+  name: string;
+  displayName: string;
+  description: string;
+  permissions: string[];
+};
+
+function getSystemRoleSeeds(): SystemRoleSeed[] {
+  return [
+    {
+      name: "super_admin",
+      displayName: "Super Admin",
+      description: "Full access to all features and settings.",
+      permissions: Object.values(PERMISSIONS),
+    },
+    {
+      name: "manager",
+      displayName: "Manager",
+      description: "Full access except sensitive settings and role management.",
+      permissions: Object.values(PERMISSIONS).filter(
+        (p) =>
+          !p.includes("permanent_delete") &&
+          p !== PERMISSIONS.ORDERS_REFUND &&
+          p !== PERMISSIONS.SETTINGS_DELIVERY_PROVIDERS_EDIT &&
+          p !== PERMISSIONS.SETTINGS_FRAUD_CHECKER_EDIT &&
+          p !== PERMISSIONS.VENDORS_MANAGE_PAYOUTS &&
+          p !== PERMISSIONS.TEAM_MANAGE_ROLES
+      ),
+    },
+    {
+      name: "sales_rep",
+      displayName: "Sales Representative",
+      description: "Access to orders, customers, and product viewing.",
+      permissions: [
+        PERMISSIONS.DASHBOARD_VIEW,
+        PERMISSIONS.PRODUCTS_VIEW,
+        PERMISSIONS.CATEGORIES_VIEW,
+        PERMISSIONS.COLLECTIONS_VIEW,
+        PERMISSIONS.ORDERS_VIEW,
+        PERMISSIONS.ORDERS_CREATE,
+        PERMISSIONS.ORDERS_EDIT,
+        PERMISSIONS.ORDERS_DELETE,
+        PERMISSIONS.ORDERS_RESTORE,
+        PERMISSIONS.ORDERS_CHANGE_STATUS,
+        PERMISSIONS.ORDERS_MANAGE_SHIPMENTS,
+        PERMISSIONS.CUSTOMERS_VIEW,
+        PERMISSIONS.CUSTOMERS_CREATE,
+        PERMISSIONS.CUSTOMERS_EDIT,
+        PERMISSIONS.CUSTOMERS_VIEW_HISTORY,
+        PERMISSIONS.DISCOUNTS_VIEW,
+      ],
+    },
+    {
+      name: "content_editor",
+      displayName: "Content Editor",
+      description: "Access to pages, widgets, media, and content settings.",
+      permissions: [
+        PERMISSIONS.DASHBOARD_VIEW,
+        PERMISSIONS.PAGES_VIEW,
+        PERMISSIONS.PAGES_CREATE,
+        PERMISSIONS.PAGES_EDIT,
+        PERMISSIONS.PAGES_DELETE,
+        PERMISSIONS.PAGES_PUBLISH,
+        PERMISSIONS.WIDGETS_VIEW,
+        PERMISSIONS.WIDGETS_CREATE,
+        PERMISSIONS.WIDGETS_EDIT,
+        PERMISSIONS.WIDGETS_DELETE,
+        PERMISSIONS.WIDGETS_TOGGLE_STATUS,
+        PERMISSIONS.MEDIA_VIEW,
+        PERMISSIONS.MEDIA_UPLOAD,
+        PERMISSIONS.MEDIA_DELETE,
+        PERMISSIONS.MEDIA_MANAGE_FOLDERS,
+        PERMISSIONS.COLLECTIONS_VIEW,
+        PERMISSIONS.COLLECTIONS_EDIT,
+        PERMISSIONS.COLLECTIONS_TOGGLE_STATUS,
+        PERMISSIONS.SETTINGS_HEADER_EDIT,
+        PERMISSIONS.SETTINGS_FOOTER_EDIT,
+        PERMISSIONS.SETTINGS_SEO_EDIT,
+      ],
+    },
+    {
+      name: "product_specialist",
+      displayName: "Product Specialist",
+      description: "Full access to products, categories, collections, and attributes.",
+      permissions: [
+        PERMISSIONS.DASHBOARD_VIEW,
+        PERMISSIONS.PRODUCTS_VIEW,
+        PERMISSIONS.PRODUCTS_CREATE,
+        PERMISSIONS.PRODUCTS_EDIT,
+        PERMISSIONS.PRODUCTS_DELETE,
+        PERMISSIONS.PRODUCTS_RESTORE,
+        PERMISSIONS.PRODUCTS_BULK_OPERATIONS,
+        PERMISSIONS.VENDORS_VIEW,
+        PERMISSIONS.VENDORS_CREATE,
+        PERMISSIONS.VENDORS_EDIT,
+        PERMISSIONS.VENDORS_MANAGE_STATUS,
+        PERMISSIONS.CATEGORIES_VIEW,
+        PERMISSIONS.CATEGORIES_CREATE,
+        PERMISSIONS.CATEGORIES_EDIT,
+        PERMISSIONS.CATEGORIES_DELETE,
+        PERMISSIONS.CATEGORIES_RESTORE,
+        PERMISSIONS.COLLECTIONS_VIEW,
+        PERMISSIONS.COLLECTIONS_CREATE,
+        PERMISSIONS.COLLECTIONS_EDIT,
+        PERMISSIONS.COLLECTIONS_DELETE,
+        PERMISSIONS.COLLECTIONS_RESTORE,
+        PERMISSIONS.COLLECTIONS_TOGGLE_STATUS,
+        PERMISSIONS.ATTRIBUTES_VIEW,
+        PERMISSIONS.ATTRIBUTES_CREATE,
+        PERMISSIONS.ATTRIBUTES_EDIT,
+        PERMISSIONS.ATTRIBUTES_DELETE,
+        PERMISSIONS.MEDIA_VIEW,
+        PERMISSIONS.MEDIA_UPLOAD,
+      ],
+    },
+  ];
+}
+
+function hashString(input: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+export function getRbacSeedCacheKey(): string {
+  const permissionSignature = getAllPermissions()
+    .map((permission) => [
+      permission.name,
+      permission.resource,
+      permission.action,
+      permission.category,
+      permission.isSensitive ? "1" : "0",
+    ].join(":"))
+    .sort()
+    .join("|");
+  const roleSignature = getSystemRoleSeeds()
+    .map((role) => `${role.name}:${[...role.permissions].sort().join(",")}`)
+    .sort()
+    .join("|");
+
+  return `${RBAC_SEED_CACHE_PREFIX}:${hashString(`${permissionSignature}::${roleSignature}`)}`;
+}
+
+export async function isRbacSeedCacheCurrent(
+  kv?: Pick<KVNamespace, "get">,
+): Promise<boolean> {
+  if (!kv) return false;
+  try {
+    return (await kv.get(getRbacSeedCacheKey())) === "1";
+  } catch (error) {
+    console.warn(
+      "RBAC: Failed to read seed cache marker:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
+}
+
+export async function markRbacSeedCacheCurrent(
+  kv?: Pick<KVNamespace, "put">,
+): Promise<void> {
+  if (!kv) return;
+  try {
+    await kv.put(getRbacSeedCacheKey(), "1", {
+      expirationTtl: RBAC_SEED_CACHE_TTL_SECONDS,
+    });
+  } catch (error) {
+    console.warn(
+      "RBAC: Failed to write seed cache marker:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+/**
+ * Check if RBAC is already seeded by counting permissions
+ */
+async function isRbacSeeded(db: Database): Promise<boolean> {
+  const result = await db
+    .select({ count: count() })
+    .from(permissions)
+    .get();
+  return (result?.count ?? 0) > 0;
+}
+
+/**
+ * Seed all permissions into the database
+ */
+async function seedPermissions(db: Database): Promise<void> {
+  const allPermissions = getAllPermissions();
+  const existingPermissions = await db.select({ name: permissions.name }).from(permissions);
+  const existingNames = new Set(existingPermissions.map((permission) => permission.name));
+
+  for (const perm of allPermissions) {
+    if (existingNames.has(perm.name)) continue;
+    try {
+      await db.insert(permissions).values({
+        id: crypto.randomUUID(),
+        name: perm.name,
+        displayName: perm.displayName,
+        description: perm.description,
+        resource: perm.resource,
+        action: perm.action,
+        category: perm.category,
+        isSensitive: perm.isSensitive,
+        createdAt: new Date(),
+      });
+    } catch (error: unknown) {
+      // Skip if already exists (UNIQUE constraint)
+      if (!(error instanceof Error && error.message?.includes("UNIQUE constraint failed"))) {
+        console.error(`Error seeding permission ${perm.name}:`, error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+}
+
+/**
+ * Seed system roles with their permissions
+ */
+async function seedRoles(db: Database): Promise<void> {
+  // Get all permissions from database
+  const dbPermissions = await db.select().from(permissions);
+  const permNameToId = new Map(dbPermissions.map((p) => [p.name, p.id]));
+
+  const systemRoles = getSystemRoleSeeds();
+
+  for (const roleData of systemRoles) {
+    try {
+      // Check if role already exists
+      const existingRole = await db
+        .select()
+        .from(roles)
+        .where(eq(roles.name, roleData.name))
+        .limit(1);
+
+      let roleId: string;
+
+      if (existingRole.length > 0 && existingRole[0]) {
+        roleId = existingRole[0].id;
+      } else {
+        roleId = crypto.randomUUID();
+        await db.insert(roles).values({
+          id: roleId,
+          name: roleData.name,
+          displayName: roleData.displayName,
+          description: roleData.description,
+          isSystem: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      }
+
+      // Add permissions to role
+      for (const permName of roleData.permissions) {
+        const permId = permNameToId.get(permName);
+        if (permId) {
+          try {
+            await db.insert(rolePermissions).values({
+              id: crypto.randomUUID(),
+              roleId,
+              permissionId: permId,
+              createdAt: new Date(),
+            });
+          } catch {
+            // Skip if already exists
+          }
+        }
+      }
+    } catch (error: unknown) {
+      console.error(`Error seeding role ${roleData.name}:`, error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+/**
+ * Set the first admin user as super admin
+ */
+async function setFirstAdminAsSuperAdmin(db: Database): Promise<void> {
+  // Get the first admin user by createdAt
+  const firstAdmin = await db
+    .select()
+    .from(user)
+    .where(eq(user.role, "admin"))
+    .orderBy(asc(user.createdAt))
+    .limit(1);
+
+  if (firstAdmin.length > 0 && firstAdmin[0] && !firstAdmin[0].isSuperAdmin) {
+    await db
+      .update(user)
+      .set({ isSuperAdmin: true })
+      .where(eq(user.id, firstAdmin[0].id));
+  }
+}
+
+async function isRbacSeedCurrent(db: Database): Promise<boolean> {
+  const allPermissions = getAllPermissions();
+  const systemRoles = getSystemRoleSeeds();
+  const systemRoleNames = systemRoles.map((role) => role.name);
+
+  const [permissionRows, roleRows, grantRows, firstAdminRows] = await db.batch([
+    db.select({ name: permissions.name }).from(permissions),
+    db.select({ name: roles.name })
+      .from(roles)
+      .where(inArray(roles.name, systemRoleNames)),
+    db.select({ roleName: roles.name, permissionName: permissions.name })
+      .from(roles)
+      .innerJoin(rolePermissions, eq(roles.id, rolePermissions.roleId))
+      .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+      .where(inArray(roles.name, systemRoleNames)),
+    db.select({ isSuperAdmin: user.isSuperAdmin })
+      .from(user)
+      .where(eq(user.role, "admin"))
+      .orderBy(asc(user.createdAt))
+      .limit(1),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Drizzle D1 batch typing limitation
+  ] as any) as [
+    { name: string }[],
+    { name: string }[],
+    { roleName: string; permissionName: string }[],
+    { isSuperAdmin: boolean | null }[],
+  ];
+
+  const permissionNames = new Set(permissionRows.map((permission) => permission.name));
+  if (!allPermissions.every((permission) => permissionNames.has(permission.name))) {
+    return false;
+  }
+
+  const roleNames = new Set(roleRows.map((role) => role.name));
+  if (!systemRoles.every((role) => roleNames.has(role.name))) {
+    return false;
+  }
+
+  const grants = new Set(
+    grantRows.map((grant) => `${grant.roleName}:${grant.permissionName}`),
+  );
+  if (
+    !systemRoles.every((role) =>
+      role.permissions.every((permission) => grants.has(`${role.name}:${permission}`)),
+    )
+  ) {
+    return false;
+  }
+
+  const firstAdmin = firstAdminRows[0];
+  return !firstAdmin || firstAdmin.isSuperAdmin === true;
+}
+
+/**
+ * Auto-seed RBAC if not already seeded
+ * Called from middleware on admin route access
+ * Safe to call multiple times - only seeds once
+ */
+export async function autoSeedRbacIfNeeded(
+  db: Database,
+  kv?: Pick<KVNamespace, "get" | "put">,
+): Promise<void> {
+  // Quick check — only runs once per isolate lifecycle, zero DB cost after that
+  if (seedingChecked) {
+    return;
+  }
+
+  try {
+    if (await isRbacSeedCacheCurrent(kv)) {
+      seedingChecked = true;
+      return;
+    }
+
+    const seeded = await isRbacSeeded(db);
+    if (seeded && await isRbacSeedCurrent(db)) {
+      seedingChecked = true;
+      await markRbacSeedCacheCurrent(kv);
+      return;
+    }
+
+    if (!seeded) {
+      console.log("RBAC: Auto-seeding permissions and roles...");
+    } else {
+      console.log("RBAC: Syncing missing permissions and system role grants...");
+    }
+
+    await seedPermissions(db);
+    await seedRoles(db);
+    await setFirstAdminAsSuperAdmin(db);
+
+    if (!seeded) {
+      console.log("RBAC: Auto-seeding complete.");
+    } else {
+      console.log("RBAC: Permission sync complete.");
+    }
+
+    seedingChecked = true;
+    await markRbacSeedCacheCurrent(kv);
+  } catch (error: unknown) {
+    console.error("RBAC: Auto-seeding failed:", error);
+    // Don't set seedingChecked so it retries on next request
+  }
+}

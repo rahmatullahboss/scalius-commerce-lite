@@ -1,0 +1,49 @@
+{
+  "name": "marketplace-storefront-local",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-02-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public",
+    "disable_nodejs_process_v2"
+  ],
+  "limits": {
+    "cpu_ms": 300000
+  },
+  // Local-owned placeholder configuration. Remote deploy is fail-closed.
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "dev": {
+    "inspector_port": 9231
+  },
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CACHE_CONTROL",
+      "id": "00000000000000000000000000000004"
+    },
+    {
+      "binding": "SESSION",
+      "id": "00000000000000000000000000000005"
+    }
+  ],
+  "services": [
+    {
+      "binding": "BACKEND_API",
+      "service": "marketplace-api-local"
+    }
+  ],
+  "vars": {
+    "PUBLIC_API_URL": "http://localhost:8787/api/v1",
+    "PUBLIC_API_BASE_URL": "http://localhost:8787",
+    "STOREFRONT_URL": "http://localhost:4322",
+    "CACHE_NAMESPACE": "localhost:4322",
+    "CDN_DOMAIN_URL": "localhost:8787"
+  }
+}

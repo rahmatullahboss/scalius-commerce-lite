@@ -1,0 +1,27 @@
+title = "Scalius Commerce Gitleaks policy"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic generic API-key-shaped values in deterministic test fixtures"
+targetRules = ["generic-api-key"]
+paths = [
+  '''^apps/api/src/queue-consumer\.test\.ts$''',
+  '''^apps/api/src/routes/customer-auth-cache\.test\.ts$''',
+  '''^apps/api/src/utils/api-cache-fence\.test\.ts$''',
+  '''^packages/core/src/modules/customers/customer-auth-otp-challenges\.test\.ts$''',
+  '''^packages/core/src/modules/customers/otp-delivery-receipts\.test\.ts$''',
+  '''^packages/core/src/modules/customers/otp-transport\.test\.ts$''',
+  '''^packages/core/src/modules/marketplace/provider-shipment\.test\.ts$''',
+  '''^packages/core/src/modules/marketplace/shipment\.test\.ts$''',
+  '''^packages/database/__tests__/vendor-shipments-sqlite\.test\.mjs$''',
+]
+
+[[allowlists]]
+description = "Synthetic PEM fixtures used to verify Firebase and cache-setting validation"
+targetRules = ["private-key"]
+paths = [
+  '''^apps/api/src/routes/admin/settings/system-cache-invalidation\.test\.ts$''',
+  '''^packages/core/src/integrations/firebase/admin\.test\.ts$''',
+]
