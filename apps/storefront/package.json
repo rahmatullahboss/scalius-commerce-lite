@@ -31,7 +31,7 @@
     "@scalius/shared": "workspace:*",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "astro": "^6.4.6",
+    "astro": "^7.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "embla-carousel-react": "^8.6.0",
