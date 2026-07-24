@@ -341,13 +341,13 @@ importers:
         version: 3.0.71(zod@4.4.3)
       '@hono/swagger-ui':
         specifier: ^0.6.1
-        version: 0.6.1(hono@4.12.25)
+        version: 0.6.1(hono@4.12.27)
       '@hono/zod-openapi':
         specifier: ^1.4.0
-        version: 1.4.0(hono@4.12.25)(zod@4.4.3)
+        version: 1.4.0(hono@4.12.27)(zod@4.4.3)
       '@hono/zod-validator':
         specifier: ^0.8.0
-        version: 0.8.0(hono@4.12.25)(zod@4.4.3)
+        version: 0.8.0(hono@4.12.27)(zod@4.4.3)
       '@openrouter/ai-sdk-provider':
         specifier: ^2.9.1
         version: 2.9.1(ai@6.0.205(zod@4.4.3))(zod@4.4.3)
@@ -389,7 +389,7 @@ importers:
         version: 12.14.0
       hono:
         specifier: ^4.12.25
-        version: 4.12.25
+        version: 4.12.27
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
@@ -535,7 +535,7 @@ importers:
     devDependencies:
       '@astrojs/cloudflare':
         specifier: ^13.7.0
-        version: 13.7.0(@types/node@25.9.3)(astro@6.4.6(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.22.4)(yaml@2.9.0))(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(workerd@1.20260611.1)(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))(yaml@2.9.0)
+        version: 13.7.0(@types/node@25.9.3)(astro@6.4.6(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.22.4)(yaml@2.9.0))(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))(yaml@2.9.0)
       '@cloudflare/workers-types':
         specifier: ^4.20260613.1
         version: 4.20260613.1
@@ -1050,8 +1050,8 @@ packages:
       react: ^19.2.7
       react-dom: ^19.2.7
 
-  '@captchafox/types@1.5.0':
-    resolution: {integrity: sha512-uReDnNoAarRjhbxC0w4hEueKLCx8w22dv+XqzDjR4rUFo3fCj8Dh3A6D27OFAYlfSr/nwomDatAxz7ixwJ5y5w==}
+  '@captchafox/types@1.6.0':
+    resolution: {integrity: sha512-isJBepZntzO++rE2i9rP4FGh5XPwoXXle4H2POkNR6bYwjBaWI1D7XwbW5oylLnXMMELGksNnOX0QGHYHuQ2PQ==}
 
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
@@ -1249,11 +1249,11 @@ packages:
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild-kit/esm-loader@2.6.5':
     resolution: {integrity: sha512-FxEMIkJKnodyA1OaCUoEvbYRkoZlLZ4d/eXFu9Fh8CbBBgP5EmZxrfTRyN0qpXZ4vOvqnE5YdRdcrmUUXuU+dA==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -5495,8 +5495,8 @@ packages:
   hoist-non-react-statics@3.3.2:
     resolution: {integrity: sha512-/gGivxi8JPKWNm/W0jSmzcMPpfpPLc3dY/6GxhX2hQ9iGj3aDfklV4ET7NjKpSinLpJ5vafa9iiGIEZg10SfBw==}
 
-  hono@4.12.25:
-    resolution: {integrity: sha512-2NFaIyNVgJmBs/ecmtGzlmluTFs5cHEWGTdu0t1HBwYzoGXOL5nUQBRMXsXWla5i4KkG//QMzVP88m1+I3fdAQ==}
+  hono@4.12.27:
+    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -6154,6 +6154,11 @@ packages:
 
   nanoid@5.1.11:
     resolution: {integrity: sha512-v+KEsUv2ps74PaSKv0gHTxTCgMXOIfBEbaqa6w6ISIGC7ZsvHN4N9oJ8d4cmf0n5oTzQz2SLmThbQWhjd/8eKg==}
+    engines: {node: ^18 || >=20}
+    hasBin: true
+
+  nanoid@5.1.16:
+    resolution: {integrity: sha512-kVrnsrJqMR8+oLJnGEmSWw9BivK5mt7H3FZatVRjrc5wGqFYuBxX1yG7+A7Gi5AefkX6t/oCkizcQgpu0cY1dQ==}
     engines: {node: ^18 || >=20}
     hasBin: true
 
@@ -6937,6 +6942,11 @@ packages:
 
   srvx@0.11.16:
     resolution: {integrity: sha512-bp07zRuycfTY43IjAvvTFnmnJi8ikW0VFiHwOhhYcVW/L4xQ1XY4PAd4Nuum1rsA17C39zL7x+CDhrn5AL32Rw==}
+    engines: {node: '>=20.16.0'}
+    hasBin: true
+
+  srvx@0.11.22:
+    resolution: {integrity: sha512-LqZxxBDMKuMAZzFzJnDCkFOrs9MZQZr0LvHiO/SuSZVdQaXD7xQ5UWTUxheJrQPve1qk9MG2B/yttUvJxw8egQ==}
     engines: {node: '>=20.16.0'}
     hasBin: true
 
@@ -7835,11 +7845,11 @@ snapshots:
       - prettier
       - prettier-plugin-astro
 
-  '@astrojs/cloudflare@13.7.0(@types/node@25.9.3)(astro@6.4.6(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.22.4)(yaml@2.9.0))(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(workerd@1.20260611.1)(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))(yaml@2.9.0)':
+  '@astrojs/cloudflare@13.7.0(@types/node@25.9.3)(astro@6.4.6(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.22.4)(yaml@2.9.0))(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))(yaml@2.9.0)':
     dependencies:
       '@astrojs/internal-helpers': 0.10.0
       '@astrojs/underscore-redirects': 1.0.3
-      '@cloudflare/vite-plugin': 1.40.2(vite@7.3.5(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))(workerd@1.20260611.1)(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))
+      '@cloudflare/vite-plugin': 1.40.2(vite@7.3.5(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))
       astro: 6.4.6(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.22.4)(yaml@2.9.0)
       piccolore: 0.1.3
       tinyglobby: 0.2.17
@@ -8242,11 +8252,11 @@ snapshots:
 
   '@captchafox/react@1.12.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@captchafox/types': 1.5.0
+      '@captchafox/types': 1.6.0
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
 
-  '@captchafox/types@1.5.0': {}
+  '@captchafox/types@1.6.0': {}
 
   '@cfworker/json-schema@4.1.1': {}
 
@@ -8279,7 +8289,7 @@ snapshots:
     optionalDependencies:
       workerd: 1.20260611.1
 
-  '@cloudflare/vite-plugin@1.40.2(vite@7.3.5(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))(workerd@1.20260611.1)(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))':
+  '@cloudflare/vite-plugin@1.40.2(vite@7.3.5(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))(wrangler@4.100.0(@cloudflare/workers-types@4.20260613.1))':
     dependencies:
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260611.1)
       miniflare: 4.20260611.0
@@ -8993,25 +9003,25 @@ snapshots:
 
   '@hey-api/types@0.1.4': {}
 
-  '@hono/node-server@1.19.14(hono@4.12.25)':
+  '@hono/node-server@1.19.14(hono@4.12.27)':
     dependencies:
-      hono: 4.12.25
+      hono: 4.12.27
 
-  '@hono/swagger-ui@0.6.1(hono@4.12.25)':
+  '@hono/swagger-ui@0.6.1(hono@4.12.27)':
     dependencies:
-      hono: 4.12.25
+      hono: 4.12.27
 
-  '@hono/zod-openapi@1.4.0(hono@4.12.25)(zod@4.4.3)':
+  '@hono/zod-openapi@1.4.0(hono@4.12.27)(zod@4.4.3)':
     dependencies:
       '@asteasolutions/zod-to-openapi': 8.5.0(zod@4.4.3)
-      '@hono/zod-validator': 0.8.0(hono@4.12.25)(zod@4.4.3)
-      hono: 4.12.25
+      '@hono/zod-validator': 0.8.0(hono@4.12.27)(zod@4.4.3)
+      hono: 4.12.27
       openapi3-ts: 4.6.0
       zod: 4.4.3
 
-  '@hono/zod-validator@0.8.0(hono@4.12.25)(zod@4.4.3)':
+  '@hono/zod-validator@0.8.0(hono@4.12.27)(zod@4.4.3)':
     dependencies:
-      hono: 4.12.25
+      hono: 4.12.27
       zod: 4.4.3
 
   '@hookform/resolvers@5.4.0(react-hook-form@7.79.0(react@19.2.7))':
@@ -9316,7 +9326,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.25)
+      '@hono/node-server': 1.19.14(hono@4.12.27)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -9326,7 +9336,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.25
+      hono: 4.12.27
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -11041,7 +11051,7 @@ snapshots:
       '@triplit/logger': 0.0.3(typescript@6.0.3)
       core-js: 3.49.0
       elen: 1.0.10
-      nanoid: 5.1.11
+      nanoid: 5.1.16
       sorted-btree: 1.8.1
       web-worker: 1.5.0
     transitivePeerDependencies:
@@ -12688,7 +12698,7 @@ snapshots:
   h3@2.0.1-rc.20:
     dependencies:
       rou3: 0.8.1
-      srvx: 0.11.16
+      srvx: 0.11.22
 
   happy-dom@20.10.3:
     dependencies:
@@ -12808,7 +12818,7 @@ snapshots:
     dependencies:
       react-is: 19.2.7
 
-  hono@4.12.25: {}
+  hono@4.12.27: {}
 
   html-escaper@2.0.2: {}
 
@@ -13576,6 +13586,8 @@ snapshots:
   nanoid@3.3.12: {}
 
   nanoid@5.1.11: {}
+
+  nanoid@5.1.16: {}
 
   nanostores@1.3.0: {}
 
@@ -14543,6 +14555,8 @@ snapshots:
   sql.js@1.14.1: {}
 
   srvx@0.11.16: {}
+
+  srvx@0.11.22: {}
 
   stackback@0.0.2: {}
 
