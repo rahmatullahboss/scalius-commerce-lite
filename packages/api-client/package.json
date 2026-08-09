@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@hey-api/openapi-ts": "^0.98.2",
+    "@hey-api/openapi-ts": "^0.99.0",
     "@scalius/tsconfig": "workspace:*",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
