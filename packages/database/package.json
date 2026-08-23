@@ -20,7 +20,7 @@
     "@cloudflare/workers-types": "^4.20260613.1",
     "@scalius/tsconfig": "workspace:*",
     "drizzle-kit": "^0.31.10",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   },
   "license": "UNLICENSED"
 }
