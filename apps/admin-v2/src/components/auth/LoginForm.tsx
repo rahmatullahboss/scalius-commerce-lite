@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { AlertCircle, Loader2, Lock, Mail } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { storePendingTwoFactorMethods } from "@/lib/two-factor-pending";
+import { classifyEmailSignInResponse, type EmailSignInResponse } from "@/lib/login-sign-in-outcome";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,12 +14,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
-interface SignInResponse {
-  error?: { message?: string } | null;
-  twoFactorRedirect?: boolean;
-  twoFactorMethods?: readonly unknown[];
-}
 
 function getSignInError(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
@@ -53,16 +48,17 @@ export function LoginForm() {
         rememberMe,
         callbackURL: "/admin",
         fetchOptions: { throw: true },
-      })) as SignInResponse;
+      })) as EmailSignInResponse;
 
-      if (response.error) {
-        setError(response.error.message || "Invalid email or password.");
+      const outcome = classifyEmailSignInResponse(response);
+      if (outcome.kind === "error") {
+        setError(outcome.message);
         setIsLoading(false);
         return;
       }
 
-      if (response.twoFactorRedirect) {
-        storePendingTwoFactorMethods(response.twoFactorMethods);
+      if (outcome.kind === "two-factor") {
+        storePendingTwoFactorMethods(outcome.methods);
         await navigate({ to: "/auth/two-factor" });
         return;
       }
